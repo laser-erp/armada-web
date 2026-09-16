@@ -1438,7 +1438,8 @@ function vehicleFitsOrder(v, o){
     if(!(need>0)) continue;
     anyReq=true;
     const have=+v[field];
-    if(!(have>0) || have+1e-9<need) return false;
+    if(!(have>0)) continue;
+    if(have+1e-9<need) return false;
   }
   if(!anyReq) return true;
   return true;
@@ -2556,6 +2557,7 @@ function orderBelongsToDriver(o, name){
 /** Есть признаки закрытия, даже если closedAt снёс sync. */
 function looksClosedOrder(o){
   if(!o||o.cancelledAt) return false;
+  if(typeof isUnassignedPortalOrder==='function' && isUnassignedPortalOrder(o)) return false;
   if(o.closedAt) return true;
   // loadedKm/emptyKmAfter после выгрузки — заказ уже закрывали
   if(o.endOdometer!=null && (o.loadedKm!=null || o.emptyKmAfter!=null)) return true;
@@ -3815,9 +3817,11 @@ function mergeOrderFields(cur, lo){
     'rateCash','rateWithVat','rateWithoutVat','freight','paymentForm','workHours',
     'loading','unloading','loadingAddress','unloadingAddress','customer'
   ];
+  const closeKeys=new Set(['departOdometer','startOdometer','endOdometer','previousOdometer','emptyKmBefore','loadedKm','emptyKmAfter','departAt','arrivedAt','endAt','parkingAt','closedAt']);
   prefer.forEach(k=>{
     const a=cur[k], b=lo[k];
     if(b==null||b==='') return;
+    if(closeKeys.has(k) && typeof isUnassignedPortalOrder==='function' && isUnassignedPortalOrder(cur)) return;
     if(a==null||a===''){ cur[k]=b; changed=true; return; }
   });
   // Если локальная копия явно полнее — забираем недостающие метки времени/закрытия
@@ -4262,9 +4266,18 @@ function healAllOrders(){
   if(purgeDeadOrdersEverywhere()) changed=true;
   if(healStuckClosing()) changed=true;
   if(healStuckOrderSteps()) changed=true;
+  (state.orders||[]).forEach(o=>{
+    if(healFalseClosedInboxOrder(o)) changed=true;
+  });
+  (state.shifts||[]).forEach(s=>{
+    (s.orders||[]).forEach(o=>{
+      if(healFalseClosedInboxOrder(o)) changed=true;
+    });
+  });
   if(hydrateOrdersFromMessages()) changed=true;
   (state.orders||[]).forEach(o=>{
     if(healFalseClosedInboxOrder(o)) changed=true;
+    if(typeof healTransportAppDriver==='function'&&healTransportAppDriver(o)) changed=true;
     if(healOrderCloseState(o)) changed=true;
     ensureOrderTimeStamps(o);
   });
@@ -4891,6 +4904,7 @@ try{
     if(typeof showCustomerPortal==='function') showCustomerPortal();
     else if(typeof openCustomerLogin==='function') openCustomerLogin();
   } else if(urlEntry==='driver'){
+    try{ await initCloudSync(); }catch(_){}
     if(await tryDriver()){ /* ok */ }
     else openDedicatedEntryScreen();
   } else if(urlEntry==='admin'){

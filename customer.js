@@ -257,6 +257,7 @@ async function loginCustomer(){
   const seen=loadCustomerOrderSeen();
   customerOrders().forEach(o=>{ if(o&&o.id) seen[o.id]=customerOrderStatusTag(o); });
   saveCustomerOrderSeen(seen);
+  loadCustomerOrderDraftRaw();
   showCustomerPortal();
 }
 
@@ -270,9 +271,17 @@ function logoutCustomer(){
 const CUSTOMER_NOTIFY_KEY='armada_customer_notify_v1';
 const CUSTOMER_ORDER_SEEN_KEY='armada_customer_order_seen_v1';
 
+function customerOrderDriverMeta(o){
+  if(!o||typeof orderHasDriverVehicleAssigned!=='function'||!orderHasDriverVehicleAssigned(o)) return '';
+  const name=typeof orderDocDriverName==='function'?orderDocDriverName(o):String(o.driverName||'').trim();
+  const plate=typeof orderDocVehiclePlate==='function'?orderDocVehiclePlate(o):String(o.vehiclePlate||'').trim();
+  if(!name||name==='—') return '';
+  return plate&&plate!=='—'?`Водитель: ${name} · ${plate}`:`Водитель: ${name}`;
+}
 function customerOrderStatusLabel(o){
   if(!o) return '—';
   if(o.cancelledAt) return 'Отменён';
+  if(typeof isUnassignedPortalOrder==='function' && isUnassignedPortalOrder(o)) return 'У диспетчера';
   if(looksClosedOrder(o)) return 'Закрыт';
   if(o.bookStatus==='rejected' && (typeof waitingLogistDriver==='function'?waitingLogistDriver(o.driverName):true) && !o.onExchange)
     return 'Бронь отклонена';
@@ -1384,6 +1393,12 @@ function showCustomerPortal(){
     openCustomerLogin();
     return;
   }
+  customerDraftSaveMutedUntil=Date.now()+3000;
+  loadCustomerOrderDraftRaw();
+  try{
+    const chatRaw=JSON.parse(sessionStorage.getItem(CUST_CHAT_STATE_KEY)||'null');
+    if(customerChatDraftIsSubmitted(chatRaw)) clearCustomerOrderDraft();
+  }catch(_){}
   renderCustomerPortal();
   maybePromptCustomerOrderDraft();
   syncCustomerOrderModeUi();
@@ -1402,6 +1417,8 @@ function renderCustomerPortal(){
   if(sub) sub.textContent=carrier
     ?`Перевозчик: ${carrier.name}${typeof companyVatPayerLabel==='function'?' · '+companyVatPayerLabel(carrier):''}`
     :'';
+  loadCustomerOrderDraftRaw();
+  maybePromptCustomerOrderDraft();
   const loadEl=$('cust-load');
   const unloadEl=$('cust-unload');
   const pendingDraft=loadCustomerOrderDraftRaw();
@@ -1444,13 +1461,14 @@ function renderCustomerPortal(){
           ?`бронь ${o.bookedPlate} подтверждена`
           :o.bookStatus==='rejected'
             ?`бронь ${o.bookedPlate} отклонена`
-            :`запрос брони ${o.bookedPlate}`)
+            :`запрос бронi ${o.bookedPlate}`)
         :'';
+      const driverMeta=customerOrderDriverMeta(o);
       return `<div class="card" style="margin-bottom:8px">
         <h3>№ ${esc(o.sequentialNumber||'—')} · <span class="order-status ${stCls}">${esc(st)}</span></h3>
         <p class="meta">${esc(routeText(o))}</p>
         <p class="meta">${esc(o.ownCompanyName||'Диспетчер')}${bookLine?` · ${esc(bookLine)}`:''}${o.fulfillment==='direct'?' · свой парк':''}</p>
-        <p class="meta">${o.executorType==='partner'?'':(o.driverName&&o.driverName!=='Биржа'&&o.driverName!=='Диспетчер'?`Водитель: ${esc(o.driverName)} · `:'')}${o.pricePending?'Цена: уточнит диспетчер · ':o.priceForClient?`Цена: ${fmt(o.priceForClient)} ₽ · `:''}${esc(dateTime(o.createdAt))}</p>
+        <p class="meta">${driverMeta?`${esc(driverMeta)} · `:''}${o.pricePending?'Цена: уточнит диспетчер · ':o.priceForClient?`Цена: ${fmt(o.priceForClient)} ₽ · `:''}${esc(dateTime(o.createdAt))}</p>
         ${o.priceQuoteSummary?`<p class="meta">Тариф ${esc(o.priceTariffCarrierName||o.ownCompanyName||'перевозчика')}: ${esc(o.priceQuoteSummary)}</p>`:''}
         ${orderReqText(o)?`<p class="meta">${esc(orderReqText(o))}</p>`:''}
         ${typeof customerDriverDocsConfirmHtml==='function'?customerDriverDocsConfirmHtml(o):''}
@@ -1746,6 +1764,7 @@ const CUST_CHAT_BODY_FORM_FALLBACK={id:'form', label:'Способ погруз�
 const CUST_CHAT_VTYPE_POPULAR=['tent','van','reefer','platform','board','isotherm','container','lowbed','dump','timber','metal','reefer_partition'];
 const CUST_CHAT_STATE_KEY='armada_customer_chat_state_v1';
 const CUST_ORDER_DRAFT_PREFIX='armada_customer_order_draft_v1';
+const CUST_LAST_SUBMIT_PREFIX='armada_customer_last_submit_v1';
 const CUST_ORDER_DRAFT_TTL_MS=7*24*60*60*1000;
 const CUST_ORDER_DRAFT_FIELD_IDS=[
   'cust-cargo-text','cust-cargo-places','cust-cargo-volume','cust-cargo-packaging',
@@ -1763,10 +1782,67 @@ let customerChat={messages:[], stepIndex:0, data:{}, summaryReady:false};
 let customerDraftSaveTimer=null;
 let customerDraftApplying=false;
 let customerDraftPromptLoaded=null;
+let customerDraftSaveMutedUntil=0;
 
 function customerOrderDraftKey(){
   const id=currentCustomer&&currentCustomer.companyId;
   return id?`${CUST_ORDER_DRAFT_PREFIX}_${id}`:null;
+}
+function customerLastSubmitKey(){
+  const id=currentCustomer&&currentCustomer.companyId;
+  return id?`${CUST_LAST_SUBMIT_PREFIX}_${id}`:null;
+}
+function markCustomerLastSubmit(order){
+  const key=customerLastSubmitKey();
+  if(!key||!order) return;
+  try{
+    localStorage.setItem(key, JSON.stringify({
+      orderId:order.id||null,
+      createdAt:order.createdAt||new Date().toISOString(),
+      load:String(order.loadingAddress||'').trim(),
+      unload:String(order.unloadingAddress||'').trim(),
+      cargo:String(order.cargoDescription||'').trim()
+    }));
+  }catch(_){}
+}
+function customerDraftMatchesLastSubmit(draft){
+  const key=customerLastSubmitKey();
+  if(!key||!draft) return false;
+  try{
+    const last=JSON.parse(localStorage.getItem(key)||'null');
+    if(!last) return false;
+    const f=draft.fields||{};
+    const load=String(f['cust-load']||'').trim();
+    const unload=String(f['cust-unload']||'').trim();
+    const cargo=String(f['cust-cargo-text']||'').trim();
+    const draftTs=Date.parse(draft.savedAt||0)||0;
+    const submitTs=Date.parse(last.createdAt||0)||0;
+    if(submitTs&&draftTs&&Math.abs(draftTs-submitTs)<600000) return true;
+    if(load&&unload&&last.load===load&&last.unload===unload) return true;
+    if(cargo&&load&&last.cargo===cargo&&last.load===load) return true;
+    return false;
+  }catch(_){ return false; }
+}
+function customerOrderDraftIsDefaultsOnly(d){
+  if(!d||!currentCustomer) return false;
+  const co=findCompanyById(currentCustomer.companyId);
+  if(!co) return false;
+  const f=d.fields||{};
+  const load=String(f['cust-load']||'').trim();
+  const unload=String(f['cust-unload']||'').trim();
+  const defLoad=(co.loadingAddresses&&co.loadingAddresses[0]||'').trim();
+  const defUnload=(co.unloadingAddresses&&co.unloadingAddresses[0]||'').trim();
+  const contentFields=['cust-cargo-text','cust-weight-value','cust-load-note','cust-unload-note',
+    'cust-loading-contact-name','cust-loading-contact-phone','cust-unloading-contact-name','cust-unloading-contact-phone',
+    'cust-cargo-places','cust-cargo-volume','cust-vehicle-date','cust-vehicle-time','cust-price'];
+  if(contentFields.some(id=>String(f[id]||'').trim())) return false;
+  if((d.vehicleTypes||[]).length) return false;
+  if((d.loadMethods||[]).length||(d.unloadMethods||[]).length) return false;
+  const chat=d.chat||{};
+  if((chat.messages||[]).length>1) return false;
+  if(chat.data&&Object.keys(chat.data).length) return false;
+  if(!load&&!unload) return false;
+  return !!(defLoad&&defUnload&&load===defLoad&&unload===defUnload);
 }
 function customerDraftTimeLabel(iso){
   if(!iso) return '';
@@ -1789,11 +1865,43 @@ function loadCustomerOrderDraftRaw(){
       localStorage.removeItem(key);
       return null;
     }
+    if(!customerOrderDraftHasContent(raw)){
+      localStorage.removeItem(key);
+      return null;
+    }
     return raw;
   }catch(_){ return null; }
 }
+function customerChatDraftIsSubmitted(chat){
+  return (chat&&chat.messages||[]).some(m=>m&&m.stepId==='submitted');
+}
+function customerDraftLikelySubmitted(draft){
+  if(!draft||!currentCustomer) return false;
+  if(customerDraftMatchesLastSubmit(draft)) return true;
+  const draftTs=Date.parse(draft.savedAt||0)||0;
+  const f=draft.fields||{};
+  const load=String(f['cust-load']||'').trim();
+  const unload=String(f['cust-unload']||'').trim();
+  const cargo=String(f['cust-cargo-text']||'').trim();
+  return customerOrders().some(o=>{
+    if(!o||o.cancelledAt) return false;
+    const created=Date.parse(o.createdAt||0)||0;
+    const routeMatch=load&&unload
+      && String(o.loadingAddress||'').trim()===load
+      && String(o.unloadingAddress||'').trim()===unload;
+    const cargoMatch=cargo&&load
+      && String(o.cargoDescription||'').trim()===cargo
+      && String(o.loadingAddress||'').trim()===load;
+    if(!routeMatch&&!cargoMatch) return false;
+    if(created&&draftTs&&draftTs<created-300000) return false;
+    return true;
+  });
+}
 function customerOrderDraftHasContent(d){
   if(!d) return false;
+  if(customerChatDraftIsSubmitted(d.chat)) return false;
+  if(customerDraftLikelySubmitted(d)) return false;
+  if(customerOrderDraftIsDefaultsOnly(d)) return false;
   const f=d.fields||{};
   const textKeys=['cust-cargo-text','cust-load','cust-unload','cust-weight-value','cust-load-note','cust-unload-note',
     'cust-loading-contact-name','cust-loading-contact-phone','cust-unloading-contact-name','cust-unloading-contact-phone',
@@ -1846,6 +1954,8 @@ function collectCustomerOrderDraft(){
 }
 function persistCustomerOrderDraft(){
   if(customerDraftApplying || !currentCustomer) return;
+  if(Date.now()<customerDraftSaveMutedUntil) return;
+  if(customerChatDraftIsSubmitted(customerChat)) return;
   const key=customerOrderDraftKey();
   if(!key) return;
   try{
@@ -1860,6 +1970,7 @@ function persistCustomerOrderDraft(){
 }
 function scheduleCustomerOrderDraftSave(){
   if(customerDraftApplying || !currentCustomer) return;
+  if(Date.now()<customerDraftSaveMutedUntil) return;
   clearTimeout(customerDraftSaveTimer);
   customerDraftSaveTimer=setTimeout(persistCustomerOrderDraft, 500);
 }
@@ -1921,6 +2032,8 @@ function customerChatAfterOrderSubmit(order, invoice){
   customerChat.stepIndex=CUST_CHAT_STEPS.length;
   customerChat.summaryReady=false;
   customerChat.data={cargoItems:[]};
+  markCustomerLastSubmit(order);
+  customerDraftSaveMutedUntil=Date.now()+10000;
   clearCustomerOrderDraft();
   saveCustomerChatState();
   customerChatRenderAll();
@@ -1935,6 +2048,8 @@ function customerFormAfterOrderSubmit(order, invoice){
     customerWireInvoiceLinks(box);
     if(typeof wireCustomerOrderDocuments==='function') wireCustomerOrderDocuments(box);
   }
+  markCustomerLastSubmit(order);
+  customerDraftSaveMutedUntil=Date.now()+10000;
   clearCustomerOrderDraft();
 }
 function resetCustomerOrderFormFields(){
@@ -2114,12 +2229,11 @@ function customerPortalFormIsEmpty(){
 function maybePromptCustomerOrderDraft(){
   if(!currentCustomer) return;
   const draft=loadCustomerOrderDraftRaw();
-  if(!draft || !customerOrderDraftHasContent(draft)) return;
-  if(customerDraftPromptLoaded && customerDraftPromptLoaded===draft.savedAt) return;
-  if(customerPortalFormIsEmpty()){
-    applyCustomerOrderDraft(draft);
+  if(!draft || !customerOrderDraftHasContent(draft)){
+    hideCustomerDraftBanner();
     return;
   }
+  if(customerDraftPromptLoaded && customerDraftPromptLoaded===draft.savedAt) return;
   showCustomerDraftBanner(draft);
 }
 
@@ -2130,13 +2244,17 @@ function saveCustomerChatState(){
       messages:customerChat.messages, stepIndex:customerChat.stepIndex,
       data:customerChat.data, summaryReady:customerChat.summaryReady
     }));
-    scheduleCustomerOrderDraftSave();
+    if(!customerChatDraftIsSubmitted(customerChat)) scheduleCustomerOrderDraftSave();
   }catch(_){}
 }
 function restoreCustomerChatState(){
   try{
     const raw=JSON.parse(sessionStorage.getItem(CUST_CHAT_STATE_KEY)||'null');
     if(!raw||!Array.isArray(raw.messages)||!raw.messages.length) return false;
+    if(customerChatDraftIsSubmitted(raw)){
+      clearCustomerChatState();
+      return false;
+    }
     customerChat={messages:raw.messages, stepIndex:+raw.stepIndex||0, data:customerChatMigrateData(raw.data||{}), summaryReady:!!raw.summaryReady};
     return true;
   }catch(_){ return false; }

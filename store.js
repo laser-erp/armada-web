@@ -187,7 +187,7 @@ function dayKeyFromIso(iso){
   if(Number.isNaN(d.getTime())) return '';
   return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
 }
-const APP_BUILD="2026-09-16-batch-features";
+const APP_BUILD="2026-09-16-release";
 /** Корпоративная почта @armada.sx (biz.mail.ru; алиасы → info@armada.sx). */
 const ARMADA_MAIL={
   info:'info@armada.sx',
@@ -770,20 +770,26 @@ function bodyTypeMatchMeta(id){
   if(coarse) return { id:coarse.id, group:coarse.id };
   return { id:x, group:mapVtypeToBodyType(x) };
 }
-/** ТС подходит по типу кузова: vehicleTypeIds (точно) или reqBodyType (группа/точный ATI). */
+function bodyTypeOrderMatch(a, b){
+  if(!a||!b) return false;
+  if(a===b) return true;
+  const ma=bodyTypeMatchMeta(a);
+  const mb=bodyTypeMatchMeta(b);
+  if(!ma||!mb) return false;
+  if(ma.id===mb.id) return true;
+  if(ma.group===mb.group) return true;
+  return false;
+}
+/** ТС подходит по типу кузова: vehicleTypeIds или reqBodyType (точный id или группа tent/board/reefer/dump). */
 function vehicleBodyTypeMatchesOrder(v, o){
   if(!v||!o) return true;
   const vtypes=Array.isArray(o.vehicleTypeIds)?o.vehicleTypeIds.filter(Boolean):[];
   const req=String(o.reqBodyType||'').trim();
   if(!vtypes.length && !req) return true;
   const vid=String(v.bodyTypeId||'').trim();
-  if(!vid) return false;
-  if(vtypes.length) return vtypes.includes(vid);
-  const reqMeta=bodyTypeMatchMeta(req);
-  const vehMeta=bodyTypeMatchMeta(vid);
-  if(!reqMeta||!vehMeta) return false;
-  if(BODY_TYPES.some(t=>t.id===req)) return vehMeta.group===reqMeta.group;
-  return vehMeta.id===reqMeta.id;
+  if(!vid) return !vtypes.length && !req;
+  if(vtypes.length) return vtypes.some(tid=>bodyTypeOrderMatch(tid, vid));
+  return bodyTypeOrderMatch(req, vid);
 }
 function cargoKindLabel(id){
   return (CARGO_KINDS.find(x=>x.id===id)||{}).label||'';
@@ -2760,11 +2766,40 @@ function armadaApiJsonHeaders(){
   if(t) h.Authorization='Bearer '+t;
   return h;
 }
-/** При входе: spaces/companies с сервера — иначе ИНН «не найден» на чистом браузере. */
+/** При входе: spaces/companies/drivers с сервера — иначе на чистом браузере нет каталога. */
+function mergeDriversFromRemoteForLogin(remoteDrivers){
+  if(!Array.isArray(remoteDrivers)||!remoteDrivers.length) return false;
+  const key=d=>`${String(d.name||'').trim().toLowerCase()}|${d.companyId||''}`;
+  const byKey=new Map();
+  (state.drivers||[]).forEach(d=>{
+    if(!d||!String(d.name||'').trim()) return;
+    byKey.set(key(d), {...d});
+  });
+  remoteDrivers.forEach(r=>{
+    if(!r||!String(r.name||'').trim()) return;
+    const k=key(r);
+    const prev=byKey.get(k)||{};
+    byKey.set(k, {...prev, ...r, name:String(r.name||prev.name||'').trim()});
+  });
+  state.drivers=[...byKey.values()];
+  if(typeof migrateDriverPins==='function') migrateDriverPins();
+  return true;
+}
 function mergeLoginCatalogFromRemote(p){
   if(!p||typeof p!=='object') return;
   if(Array.isArray(p.spaces)&&p.spaces.length) state.spaces=p.spaces;
   if(Array.isArray(p.companies)&&p.companies.length) state.companies=p.companies;
+  mergeDriversFromRemoteForLogin(p.drivers);
+}
+async function syncDriversCatalogForLogin(showProgress){
+  if(typeof showProgress==='function') showProgress('Загрузка данных…');
+  if(typeof initCloudSync==='function'){
+    try{ await initCloudSync(); return true; }catch(_){}
+  }
+  if(navigator.onLine!==false && typeof refreshAuthFromServer==='function'){
+    return await refreshAuthFromServer({pin:'sync', meta:{role:'driver'}});
+  }
+  return false;
 }
 async function refreshAdminListForLogin(){
   return refreshAuthFromServer({pin:'sync', meta:{role:'admin', purpose:'login-list'}});
@@ -2820,9 +2855,12 @@ async function fetchArmadaApiHealth(timeoutMs){
 async function fetchServerStateFromApi(timeoutMs){
   const res=await fetchWithTimeout(`${API_BASE}/state`, { headers:armadaApiJsonHeaders() }, timeoutMs);
   const data=await res.json().catch(()=>({}));
-  if(!res.ok) throw new Error(data.error||'API state '+res.status);
-  if(!data.payload) return null;
-  return { id:data.recordId, payload:data.payload, viaApi:true };
+  if(!res.ok) throw new Error(data.error||data.message||'API state '+res.status);
+  const rec=data.record;
+  const payload=(rec&&rec.payload!=null)?rec.payload:data.payload;
+  const id=(rec&&rec.id!=null)?rec.id:(data.recordId||null);
+  if(!payload) return null;
+  return { id, payload, viaApi:true };
 }
 async function fetchServerStateFromPb(timeoutMs){
   const filter=encodeURIComponent("key='main'");
@@ -2834,8 +2872,11 @@ async function fetchServerStateFromPb(timeoutMs){
 async function fetchServerState(timeoutMs, opts){
   if(API_BASE){
     await ensureArmadaApiToken(opts);
-    try{ return await fetchServerStateFromApi(timeoutMs); }
-    catch(err){ console.warn('API state fetch, fallback PB', err); }
+    try{
+      const rec=await fetchServerStateFromApi(timeoutMs);
+      if(rec&&rec.payload) return rec;
+      console.warn('API state empty, fallback PB');
+    }catch(err){ console.warn('API state fetch, fallback PB', err); }
   }
   return await fetchServerStateFromPb(timeoutMs);
 }
