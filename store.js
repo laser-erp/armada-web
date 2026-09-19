@@ -187,7 +187,7 @@ function dayKeyFromIso(iso){
   if(Number.isNaN(d.getTime())) return '';
   return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
 }
-const APP_BUILD="2026-09-19-inbox-assign-ui";
+const APP_BUILD="2026-09-19-admin-kanban-ux";
 /** Корпоративная почта @armada.sx (biz.mail.ru; алиасы → info@armada.sx). */
 const ARMADA_MAIL={
   info:'info@armada.sx',
@@ -546,7 +546,7 @@ function backFromEntryLogin(opts){
 /** Прод-хосты: VPS и основной домен приложения. */
 function isArmadaProdHost(hostname){
   const h=(hostname||'').toLowerCase();
-  return h==='app.armada.sx'||h==='aptown1.fvds.ru'||h==='176.12.67.35';
+  return h==='app.armada.sx'||h==='staging.app.armada.sx'||h==='aptown1.fvds.ru'||h==='176.12.67.35';
 }
 const ARMADA_LIVE_ORIGIN='https://app.armada.sx';
 /** Backend API (S0). Локально → armada-api; на проде → Caddy prefix. */
