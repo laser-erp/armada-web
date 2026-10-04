@@ -187,7 +187,7 @@ function dayKeyFromIso(iso){
   if(Number.isNaN(d.getTime())) return '';
   return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
 }
-const APP_BUILD="2026-09-19-cust-status-await-assign";
+const APP_BUILD="2026-10-04-hotfix-driver-order-assigned";
 /** Корпоративная почта @armada.sx (biz.mail.ru; алиасы → info@armada.sx). */
 const ARMADA_MAIL={
   info:'info@armada.sx',
@@ -3124,6 +3124,15 @@ async function persistOrderAssignmentImmediate(){
 /** Заявка с портала заказчика — сразу на сервер (иначе диспетчер не видит до debounce/ухода со страницы). */
 async function persistCustomerPortalOrderImmediate(){
   return persistAdminPinImmediate();
+}
+/** Назначены реальный водитель и ТС (не заглушки логиста/биржи). Дублируется в order-documents.js для /a/ и /z/. */
+function orderHasDriverVehicleAssigned(o){
+  if(!o) return false;
+  const drv=String(o.driverName||'').trim();
+  const plate=String(o.vehiclePlate||'').trim();
+  if(!drv||!plate||drv==='Биржа'||drv==='Диспетчер'||drv==='—'||plate==='—') return false;
+  if(typeof waitingLogistDriver==='function'&&waitingLogistDriver(drv)) return false;
+  return true;
 }
 /** После reconcile: если назначение восстановлено из docs/transportApp — сразу на сервер (только админ). */
 async function pushRepairedAssignmentsIfNeeded(beforeSnap){

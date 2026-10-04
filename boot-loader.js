@@ -1,6 +1,6 @@
 /* АРМАДА — внешний загрузчик (CSP script-src 'self' без unsafe-inline) */
 (function () {
-  var APP_BUILD = '2026-09-18-driver-depart-eto-odo';
+  var APP_BUILD = '2026-10-04-hotfix-driver-order-assigned';
 
   window.__armadaBootDone = false;
 

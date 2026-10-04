@@ -4277,7 +4277,7 @@ function mergeRemoteOrderAssignments(remote){
       }else return;
     }
     const roOk=typeof orderHasDriverVehicleAssigned==='function'&&orderHasDriverVehicleAssigned(ro);
-    const curOk=orderHasDriverVehicleAssigned(cur);
+    const curOk=typeof orderHasDriverVehicleAssigned==='function'&&orderHasDriverVehicleAssigned(cur);
     if(roOk&&!curOk){
       if(mergeOrderAssignmentFields(cur, ro)) changed=true;
       if(typeof healPhantomPortalClose==='function'&&healPhantomPortalClose(cur)) changed=true;
