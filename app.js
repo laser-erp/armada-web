@@ -1019,14 +1019,12 @@ function migrateAdmins(){
     const nm=(a.name||'').trim().toLowerCase();
     return !RETIRED_ADMIN_IDS.has(a.id) && !RETIRED_ADMIN_NAMES.has(nm);
   });
-  // Сид только если админов ещё нет — фиксированный recovery PIN (не случайный: иначе пользователь не узнает код).
+  // Сид только если админов ещё нет — случайный PIN (без публичного recovery).
   if(!state.admins.length){
     if(!state.settings||typeof state.settings!=='object') state.settings={};
-    delete state.settings.superPinChangedByUser;
     state.admins=[{
-      id:'admin-super', name:'Наволоцкий Е.Н.', pin:SUPER_ADMIN_RECOVERY_PIN, isSuper:true, mustChangePin:true
+      id:'admin-super', name:'Наволоцкий Е.Н.', pin:generateAdminPin(), isSuper:true, mustChangePin:true
     }];
-    state.settings.superPinRecoveryNotice=superPinRecoveryNoticeText();
   }
   state.admins.forEach(a=>{
     if(a.id==='admin-super' || (a.isSuper && (a.name||'').toLowerCase()==='супер админ')){
@@ -1051,25 +1049,11 @@ function migrateAdmins(){
   if(!state.admins.some(a=>a.isSuper)){
     const first=state.admins[0];
     if(first) first.isSuper=true;
-    else state.admins.push({id:'admin-super', name:'Наволоцкий Е.Н.', pin:SUPER_ADMIN_RECOVERY_PIN, isSuper:true, mustChangePin:true});
+    else state.admins.push({id:'admin-super', name:'Наволоцкий Е.Н.', pin:generateAdminPin(), isSuper:true, mustChangePin:true});
   }
   state.adminLogins=Array.isArray(state.adminLogins)?state.adminLogins:[];
   state.adminPresence=Array.isArray(state.adminPresence)?state.adminPresence:[];
-  if(typeof consumeRecoverSuperFromUrl==='function' && consumeRecoverSuperFromUrl()){
-    forceSuperAdminPinRecovery('recover-url');
-    if(typeof markRecoverSuperConsumed==='function') markRecoverSuperConsumed();
-  } else {
-    if(typeof stripRecoverParamFromUrl==='function') stripRecoverParamFromUrl();
-    ensureSuperAdminPinRecovery();
-  }
-}
-const RECOVER_SUPER_SESSION_KEY='armada_recover_super_v1';
-function readRecoverSuperFromUrl(){
-  try{
-    const q=new URLSearchParams(location.search||'');
-    const v=String(q.get('recover')||q.get('reset')||'').trim().toLowerCase();
-    return v==='super' || v==='admin';
-  }catch(_){ return false; }
+  stripRecoverParamFromUrl();
 }
 function stripRecoverParamFromUrl(){
   try{
@@ -1081,42 +1065,9 @@ function stripRecoverParamFromUrl(){
     history.replaceState(history.state,'',next);
   }catch(_){}
 }
-function consumeRecoverSuperFromUrl(){
-  if(!readRecoverSuperFromUrl()) return false;
-  try{
-    if(sessionStorage.getItem(RECOVER_SUPER_SESSION_KEY)==='1') return false;
-  }catch(_){}
-  return true;
-}
-function markRecoverSuperConsumed(){
-  try{ sessionStorage.setItem(RECOVER_SUPER_SESSION_KEY,'1'); }catch(_){}
-  stripRecoverParamFromUrl();
-}
-function superPinRecoveryNoticeText(){
-  return 'Временный PIN супер-админа: '+SUPER_ADMIN_RECOVERY_PIN+' — смените в «Активность» после входа.';
-}
-function forceSuperAdminPinRecovery(reason){
-  if(!state.settings||typeof state.settings!=='object') state.settings={};
-  delete state.settings.superPinChangedByUser;
-  let superA=(state.admins||[]).find(a=>a.id==='admin-super'||(a.isSuper&&(a.name||'').includes('Наволоцкий')));
-  if(!superA){
-    superA={id:'admin-super', name:'Наволоцкий Е.Н.', pin:SUPER_ADMIN_RECOVERY_PIN, isSuper:true, mustChangePin:true};
-    state.admins=(state.admins||[]).concat([superA]);
-  }else{
-    superA.id='admin-super';
-    superA.name='Наволоцкий Е.Н.';
-    superA.isSuper=true;
-    superA.pin=SUPER_ADMIN_RECOVERY_PIN;
-    superA.mustChangePin=true;
-  }
-  state.settings.superPinRecoveryNotice=superPinRecoveryNoticeText();
-  if(typeof bumpDataEpoch==='function') bumpDataEpoch(reason||'super-recover');
-  if(typeof persistLocalOnly==='function') persistLocalOnly();
-}
 function isRecoveryOrWeakAdminPin(pin){
   const p=String(pin||'').trim();
   if(!p) return true;
-  if(typeof SUPER_ADMIN_RECOVERY_PIN!=='undefined' && p===SUPER_ADMIN_RECOVERY_PIN) return true;
   if(typeof WEAK_ADMIN_PINS!=='undefined' && WEAK_ADMIN_PINS.has(p)) return true;
   return false;
 }
@@ -1124,38 +1075,6 @@ function markSuperPinChangedByUser(){
   if(!state.settings||typeof state.settings!=='object') state.settings={};
   state.settings.superPinChangedByUser=true;
   delete state.settings.superPinRecoveryNotice;
-}
-/** Восстановление PIN супер-админа до явной смены в Активность (после compliance-миграции). */
-function ensureSuperAdminPinRecovery(){
-  if(!state.settings||typeof state.settings!=='object') state.settings={};
-  let superA=(state.admins||[]).find(a=>a.id==='admin-super'||(a.isSuper&&(a.name||'').includes('Наволоцкий')));
-  if(!superA){
-    if(state.settings.superPinChangedByUser) return;
-    superA={id:'admin-super', name:'Наволоцкий Е.Н.', pin:SUPER_ADMIN_RECOVERY_PIN, isSuper:true, mustChangePin:true};
-    state.admins=(state.admins||[]).concat([superA]);
-    state.settings.superPinRecoveryNotice=superPinRecoveryNoticeText();
-    return;
-  }
-  superA.id='admin-super';
-  superA.name='Наволоцкий Е.Н.';
-  superA.isSuper=true;
-  const pin=String(superA.pin||'').trim();
-  if(pin && !isRecoveryOrWeakAdminPin(pin)){
-    markSuperPinChangedByUser();
-    delete superA.mustChangePin;
-    return;
-  }
-  if(state.settings.superPinChangedByUser) return;
-  if(!pin){
-    superA.pin=SUPER_ADMIN_RECOVERY_PIN;
-    superA.mustChangePin=true;
-    state.settings.superPinRecoveryNotice=superPinRecoveryNoticeText();
-    return;
-  }
-  if(isRecoveryOrWeakAdminPin(pin)){
-    superA.mustChangePin=true;
-    state.settings.superPinRecoveryNotice=superPinRecoveryNoticeText();
-  }
 }
 function mergeAdminAuthFromRemote(p, opts){
   const remoteWinsAuth=!!(opts&&opts.remoteWinsAuth);
@@ -1206,7 +1125,6 @@ function mergeAdminAuthFromRemote(p, opts){
     });
   }
   state.adminPresence=[...byDev.values()];
-  ensureSuperAdminPinRecovery();
 }
 function isSuperAdmin(){ return !!(currentAdmin&&currentAdmin.isSuper); }
 function driversOwnedByAdminId(adminId){

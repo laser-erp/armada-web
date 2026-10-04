@@ -23,7 +23,7 @@ function findAdminByInnAndPin(innRaw, pin){
   if(!inn) return null;
   const spaceIds=spaceIdsForLoginInn(inn);
   if(!spaceIds.size){
-    // Пустая база / sync не подтянул фирмы — единственный супер по recovery PIN
+    // Пустая база / sync не подтянул фирмы — единственный супер с этим PIN
     const supers=(state.admins||[]).filter(a=>a.isSuper && String(a.pin||'').trim()===pinStr);
     if(supers.length===1) return supers[0];
     return null;

@@ -172,7 +172,6 @@ let DRIVER_COMPANY_ID=null;
 const DRIVER_SESSION_KEY="armada_driver_session_v1";
 /** Слабые PIN из истории репо — при входе требуем смену (P0.1 compliance). */
 const WEAK_ADMIN_PINS=new Set(["2580","45680","1234","0000"]);
-const SUPER_ADMIN_RECOVERY_PIN='45680';
 function generateAdminPin(){
   let s="";
   for(let i=0;i<6;i++) s+=String(Math.floor(Math.random()*10));
@@ -187,7 +186,7 @@ function dayKeyFromIso(iso){
   if(Number.isNaN(d.getTime())) return '';
   return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
 }
-const APP_BUILD="2026-10-04-hotfix-driver-order-assigned";
+const APP_BUILD="2026-10-04-hotfix-no-super-recovery";
 /** Корпоративная почта @armada.sx (biz.mail.ru; алиасы → info@armada.sx). */
 const ARMADA_MAIL={
   info:'info@armada.sx',
