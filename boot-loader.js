@@ -1,6 +1,6 @@
 /* АРМАДА — внешний загрузчик (CSP script-src 'self' без unsafe-inline) */
 (function () {
-  var APP_BUILD = '2026-10-04-hotfix-driver-order-assigned';
+  var APP_BUILD = (typeof globalThis !== 'undefined' && globalThis.ARMADA_APP_BUILD) || '2026-10-04-qa-v73';
 
   window.__armadaBootDone = false;
 
@@ -50,7 +50,7 @@
     var isA = /\/(a)(\/|$)/.test(p);
     var isZ = /\/(z)(\/|$)/.test(p);
     var files = ['store.js', 'billing.js'];
-    if (isV) files.push('qrcode.min.js', 'entry-share.js', 'epd-sign.js', 'etrn.js', 'driver.js');
+    if (isV) files.push('qrcode.min.js', 'entry-share.js', 'print-window.js', 'order-documents.js', 'doc-templates.js', 'epd-sign.js', 'etrn.js', 'onboarding.js', 'driver.js');
     else if (isA) files.push('qrcode.min.js', 'entry-share.js', 'print-window.js', 'order-documents.js', 'doc-templates.js', 'sign-operator-letters.js', 'operator-letters.js', 'admin-profile.js', 'admin-cabinet-settings.js', 'epd-sign.js', 'etrn.js', 'admin.js', 'admin-docs.js', 'admin-plans.js', 'onboarding.js');
     else if (isZ) files.push('qrcode.min.js', 'customer-invoice.js', 'order-documents.js', 'doc-templates.js', 'epd-sign.js', 'etrn.js', 'customer.js', 'onboarding.js');
     else {
@@ -76,11 +76,14 @@
       );
     }
     files.push('app.js');
+    if (!globalThis.ARMADA_APP_BUILD) files.unshift('armada-build.js');
     return files;
   }
 
   function inviteScripts() {
-    return ['store.js', 'billing.js', 'app.js', 'driver.js', 'invite.js'];
+    var inv = ['store.js', 'billing.js', 'app.js', 'driver.js', 'invite.js'];
+    if (!globalThis.ARMADA_APP_BUILD) inv.unshift('armada-build.js');
+    return inv;
   }
 
   function scriptBundle() {
@@ -105,7 +108,9 @@
         if (typeof show === 'function') show('admin');
         if (typeof renderAdmin === 'function') renderAdmin();
       } else if (typeof openDedicatedEntryScreen === 'function') {
-        openDedicatedEntryScreen();
+        if (!(early === 'driver-login' && typeof restoreDriverSession === 'function' && restoreDriverSession())) {
+          openDedicatedEntryScreen();
+        }
       }
       return;
     }

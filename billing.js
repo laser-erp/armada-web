@@ -163,6 +163,13 @@ function billingCanExport(spaceId){
   return {ok:true};
 }
 
+/** ЭТрН обязателен в рейсе (подписи T1–T4): только если в тарифе включён etrnEnabled (тариф «Старт» — нет). */
+function billingEtrnMandatoryForSpace(spaceId){
+  if(!spaceId||typeof getBillingForSpace!=='function') return false;
+  const b=getBillingForSpace(spaceId);
+  return !!(b&&b.etrnEnabled);
+}
+
 function billingCanUseEtrn(spaceId){
   const b=getBillingForSpace(spaceId);
   const st=resolveBillingStatus(spaceId);
@@ -460,7 +467,7 @@ function billingBannerForAdmin(){
   if(et.ok && typeof epdSpaceForSpaceId==='function'){
     const epd=epdSpaceForSpaceId(sid);
     const epdLbl=typeof epdSpaceStatusLabel==='function'?epdSpaceStatusLabel(epd.status):'';
-    parts.push(`ЭТrН Контур: ${epdLbl||'ждём boxId'}`);
+    parts.push(`ЭТрН Контур: ${epdLbl||'ждём boxId'}`);
   }
   return parts.join(' · ');
 }

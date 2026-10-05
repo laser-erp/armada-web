@@ -7,14 +7,14 @@
   }
 
   const EPD_SIGN_ROLES={
-    customer:{ kind:'kep', title:'Грузоотправитель · КЭП', hint:'Подпись живёт в АРМАДА: окно оператора откроется здесь. Нужна для T1 в ЭТrН и бухдоков.', tituls:'T1' },
-    carrier:{ kind:'kep', title:'Перевозчик · КЭП', hint:'Оформление и подпись T2 — в этом приложении через оператора (облако или токен с телефона).', tituls:'T2' },
-    driver:{ kind:'pep', title:'Водитель · ПЭП', hint:'ПЭП для T3/T4 оформляется здесь через оператора — без отдельного приложения.', tituls:'T3, T4' }
+    customer:{ kind:'kep', title:'Грузоотправитель · КЭП', hint:'Подпись живёт в АРМАДА: окно оператора откроется здесь. Нужна для T1 в ЭТрН и бухдоков.', tituls:'T1' },
+    carrier:{ kind:'kep', title:'Перевозчик · КЭП', hint:'КЭП перевозчика для ЭТрН (T2 на погрузке, T4 на выгрузке) — через оператора в кабинете.', tituls:'T2, T4' },
+    driver:{ kind:'pep', title:'Водитель · ПЭП', hint:'ПЭП для T2 (приём на погрузке) и T4 (выдача на выгрузке) от имени перевозчика — через оператора.', tituls:'T2, T4' }
   };
 
   const EPD_OPERATOR_LINKS={
     kontur:{ name:'Контур.Логистика', signup:'https://kontur.ru/logistika/', help:'https://kontur.ru/logistika/spravka/22576-elektronnye_transportnye_nakladnye' },
-    diadoc:{ name:'Контур.Диадoc', signup:'https://www.diadoc.ru/', help:'https://diadoc.com/blog/perehod-na-epd-s-1-sentyabrya-2026-goda-kto-obyazan-i-kak-podgotovitsya-k-elektronnomu-obmenu' },
+    diadoc:{ name:'Контур.Диадок', signup:'https://www.diadoc.ru/', help:'https://diadoc.com/blog/perehod-na-epd-s-1-sentyabrya-2026-goda-kto-obyazan-i-kak-podgotovitsya-k-elektronnomu-obmenu' },
     sbis:{ name:'СБИС', signup:'https://sbis.ru/epd', help:'https://sbis.ru/epd' },
     astral:{ name:'Астрал-ЭПД', signup:'https://astral.ru/products/epd/', help:'https://astral.ru/aj/elem/kep-unep-i-mchd-dlya-epd-kakaya-podpis-nuzhna/' }
   };
@@ -73,8 +73,10 @@
 
   function epdRoleForTitul(titul){
     const t=String(titul||'').toLowerCase();
-    if(t==='t1') return 'customer';
-    if(t==='t2') return 'carrier';
+    if(t==='t1') return 'customer'; // грузоотправитель
+    if(t==='t2') return 'carrier'; // перевозчик (приём); водитель — ПЭП от лица перевозчика
+    if(t==='t3') return 'customer'; // грузополучатель
+    if(t==='t4') return 'carrier'; // перевозчик (выдача)
     return 'driver';
   }
 
@@ -189,7 +191,7 @@
         <div class="epd-operator-sandbox" id="epd-operator-sandbox" hidden></div>
       </div>
       <div class="epd-operator-fallback" id="epd-operator-fallback" hidden>
-        <p class="hint">Контур и другие операторы не открываются во встроенном окне (ERR_BLOCKED_BY_RESPONSE). Откройте ссылку в браузере. Для ЭТrН T1 на заявке используйте «Подписать T1» — тест без Контура.</p>
+        <p class="hint">Контур и другие операторы не открываются во встроенном окне (ERR_BLOCKED_BY_RESPONSE). Откройте ссылку в браузере. Для ЭТрН T1 на заявке используйте «Подписать T1» — тест без Контура.</p>
         <button type="button" class="primary" id="epd-operator-fallback-open">Открыть в браузере</button>
         <button type="button" class="secondary" id="epd-operator-fallback-done">Подпись выпущена</button>
       </div>
@@ -254,7 +256,7 @@
     const external=epdUrlMustOpenExternally(url);
     if(lead){
       lead.textContent=external
-        ?(opts.leadExternal||'Контур и другие операторы не открываются во встроенном окне (политика безопасности). Нажмите «Открыть оператора» — откроется браузер. Для ЭТrН T1 на погрузке можно подписать тестовой кнопкой на заявке без Контура.')
+        ?(opts.leadExternal||'Контур и другие операторы не открываются во встроенном окне (политика безопасности). Нажмите «Открыть оператора» — откроется браузер. Для ЭТрН T1 на погрузке можно подписать тестовой кнопкой на заявке без Контура.')
         :(opts.lead||'Ключ и юридическая сила — у оператора ЭПД. Окно открыто внутри АРМАДА.');
     }
     if(foot) foot.hidden=(epdShellOpts.kind!=='signup');
@@ -409,7 +411,7 @@
       ${needIssue?`<button type="button" class="secondary" id="epd-sandbox-issue">КЭП через ${esc(op.name)} (браузер)</button>`:''}
     </div>`;
     openEpdSandboxPanel(sandboxHtml, {
-      title:`ЭТrН · ${titLabel}`,
+      title:`ЭТрН · ${titLabel}`,
       onClose:()=>epdRefreshUi({ refreshDriverCabinet:role==='driver' })
     });
     const issueBtn=$('epd-sandbox-issue');
@@ -441,7 +443,7 @@
     let url=await fetchEpdTitulSignUrl(orderId, titul, role);
     if(url&&!String(url).startsWith('sandbox://')&&!epdUrlMustOpenExternally(url)){
       return openEpdOperatorShell(url, {
-        title:`ЭТrН · ${titLabel}`,
+        title:`ЭТрН · ${titLabel}`,
         lead:`Подпись титула через оператора. Документ остаётся в АРМАДА, подпись — у оператора ЭПД.`,
         pollRole:role, pollEntityId:ctx.entityId,
         onClose:async()=>{
@@ -484,7 +486,7 @@
         <span class="epd-sign-plaque-icon" aria-hidden="true">✓</span>
         <div class="epd-sign-plaque-body">
           <strong>Подпись активна</strong>
-          <span class="hint">${esc(kindLabel)} готова к использованию в документах и ЭТrН</span>
+          <span class="hint">${esc(kindLabel)} готова к использованию в документах и ЭТрН</span>
         </div>
       </div>`;
     }
@@ -599,10 +601,10 @@
         </div>
         <p class="hint epd-sign-card-hint">Сначала регистрация ИП/ООО в Контуре, затем «Подключить Контур» → «Разрешить». Страницу после входа не обновляйте.</p>`;
     const plaque=connected
-      ? `<div class="epd-sign-plaque epd-sign-plaque--active" role="status"><span class="epd-sign-plaque-icon" aria-hidden="true">✓</span><div class="epd-sign-plaque-body"><strong>Организация подключена</strong><span class="hint">ЭТrН можно создавать и подписывать в заказах</span></div></div>`
+      ? `<div class="epd-sign-plaque epd-sign-plaque--active" role="status"><span class="epd-sign-plaque-icon" aria-hidden="true">✓</span><div class="epd-sign-plaque-body"><strong>Организация подключена</strong><span class="hint">ЭТрН можно создавать и подписывать в заказах</span></div></div>`
       : `<div class="epd-sign-plaque epd-sign-plaque--none" role="status"><span class="epd-sign-plaque-icon" aria-hidden="true">○</span><div class="epd-sign-plaque-body"><strong>Организация не подключена</strong><span class="hint">Привяжите ваше ИП/ООО к Контуру — один раз</span></div></div>`;
     return `<section class="epd-sign-card epd-sign-card--${connected?'active':'none'} epd-kontur-connect-card">
-      <h3 class="epd-sign-section-title">ЭТrН · ${esc(op.name)}</h3>
+      <h3 class="epd-sign-section-title">ЭТрН · ${esc(op.name)}</h3>
       ${plaque}
       <p class="meta epd-sign-card-meta">Статус: <strong>${esc(stLbl||'ждём')}</strong>${inn}</p>
       ${boxHint}
@@ -639,7 +641,7 @@
       ${epdSignPlaqueHtml(st, kindLabel)}
       ${issuedLine}
       <p class="hint epd-sign-card-hint">${esc(meta.hint)}</p>
-      <p class="meta epd-sign-card-meta">Оператор <strong>${esc(op.name)}</strong> · ${esc(kindLabel)} · ЭТrН ${esc(meta.tituls)}</p>
+      <p class="meta epd-sign-card-meta">Оператор <strong>${esc(op.name)}</strong> · ${esc(kindLabel)} · ЭТрН ${esc(meta.tituls)}</p>
       ${epdSignActionsHtml(st, role, ctx, kindLabel)}
       ${opts.extra||''}
     </section>`;

@@ -21,6 +21,13 @@ function invoiceAmountForOrder(order){
   const n=+(order&&(order.priceForClient||order.freight||order.rateCash||order.rateWithoutVat||order.rateWithVat)||0);
   return n>0?Math.round(n):0;
 }
+/** Счёт «готов» для заказчика только при известной сумме (не pricePending). */
+function invoiceReadyForCustomer(order, inv){
+  if(!inv) return false;
+  if(order&&order.pricePending) return false;
+  const amt=+(inv.amount>0?inv.amount:(invoiceAmountForOrder(order)||0));
+  return amt>0;
+}
 function buildSbpQrPayload(carrier, order, amountRub){
   const b=companyBankDetails(carrier);
   if(!b.bankAccount||!b.bankBik) return null;
@@ -138,18 +145,25 @@ function customerInvoiceHtml(invoice){
   const order=(state.orders||[]).find(o=>o.id===invoice.orderId)||{};
   const carrier=findCompanyById(invoice.carrierId||order.ownCompanyId)||null;
   const customer=findCompanyById(invoice.customerId||order.customerId)||null;
-  const bank=companyBankDetails(carrier);
   const amount=invoice.amount||invoiceAmountForOrder(order);
-  const qr=invoiceQrPayload(carrier||{}, order, amount);
-  const qrCanvas=drawInvoiceQrCanvas(qr.text, 200);
+  const ready=typeof invoiceReadyForCustomer==='function'?invoiceReadyForCustomer(order, invoice):amount>0;
+  const bank=companyBankDetails(carrier);
+  const qr=ready?invoiceQrPayload(carrier||{}, order, amount):{text:'', kind:''};
+  const qrCanvas=ready&&qr.text?drawInvoiceQrCanvas(qr.text, 200):null;
   const qrDataUrl=qrCanvas?qrCanvas.toDataURL('image/png'):'';
-  const amtLine=amount>0?`${fmt(amount)} ₽`:(invoice.pricePending?'уточняется перевозчиком':'—');
+  const amtLine=amount>0?`${fmt(amount)} ₽`:(invoice.pricePending||order.pricePending?'уточняется перевозчиком':'—');
   const bankLines=[
     bank.bankName?`Банк: ${esc(bank.bankName)}`:null,
     bank.bankBik?`БИК: ${esc(bank.bankBik)}`:null,
     bank.bankAccount?`Р/с: ${esc(bank.bankAccount)}`:null,
     bank.bankCorrAccount?`К/с: ${esc(bank.bankCorrAccount)}`:null
   ].filter(Boolean).join('<br>');
+  const qrBlock=ready
+    ?`<div class="qr-wrap">
+    ${qrDataUrl?`<img src="${qrDataUrl}" alt="QR для оплаты"/>`:'<p>QR недоступен</p>'}
+    <p class="hint">${qr.kind==='sbp'?'QR по стандарту СБП (ST00012) — отсканируйте в приложении банка.':'QR с реквизитами платежа.'}</p>
+  </div>`
+    :'<p class="hint">QR для оплаты появится после согласования цены.</p>';
   return `<!DOCTYPE html><html lang="ru"><head><meta charset="utf-8"/>
 <title>Счёт №${esc(invoice.number)}</title>
 <style>
@@ -174,13 +188,10 @@ function customerInvoiceHtml(invoice){
     <tr><th>Назначение платежа</th><td>Оплата перевозки №${esc(invoice.orderSeq||invoice.number)}</td></tr>
   </table>
   <p class="sum">К оплате: ${amtLine}</p>
-  ${bankLines?`<p>${bankLines}</p>`:'<p class="hint">Реквизиты банка не заполнены — укажите их в карточке «Наша фирма» в админке.</p>'}
-  <div class="qr-wrap">
-    ${qrDataUrl?`<img src="${qrDataUrl}" alt="QR для оплаты"/>`:'<p>QR недоступен</p>'}
-    <p class="hint">${qr.kind==='sbp'?'QR по стандарту СБП (ST00012) — отсканируйте в приложении банка.':'QR с реквизитами платежа (заполните банк в админке для СБП).'}</p>
-  </div>
+  ${ready&&bankLines?`<p>${bankLines}</p>`:''}
+  ${qrBlock}
   <p class="noprint hint"><button onclick="window.print()">Печать / PDF</button></p>
-</body></html>`;
+  </body></html>`;
 }
 function customerInvoiceBlobUrl(invoiceId){
   const inv=findInvoiceById(invoiceId);
@@ -269,6 +280,11 @@ function openCustomerInvoice(invoiceId, orderId){
     if(inv) invoiceId=inv.id;
   }
   if(!inv){ alert('Счёт не найден — обновите страницу или откройте из списка «Бух доки»'); return; }
+  const order=(state.orders||[]).find(o=>o.id===inv.orderId)||{};
+  if(typeof invoiceReadyForCustomer==='function'&&!invoiceReadyForCustomer(order, inv)){
+    alert('QR для оплаты появится после согласования цены.');
+    return;
+  }
   const pack=customerInvoiceBlobUrl(invoiceId);
   if(!pack){ alert('Не удалось сформировать счёт'); return; }
   const w=window.open(pack.url, '_blank', 'noopener');

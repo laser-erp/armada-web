@@ -162,10 +162,41 @@ function driverEtoFlowStep(){
   if(state.orderStep==='closePrevShiftParking') return true;
   return ['chooseVehicle','odometer','fuel','gur','coolant','lights','oil'].includes(state.step);
 }
+/** Открытая смена для UI ЕТО: sync + findOpenShift (копия из state.shifts, не устаревший state.shift). */
+function driverEtoShift(){
+  if(typeof syncOpenShiftRuntime==='function' && DRIVER && state.orderStep!=='closePrevShiftParking'){
+    syncOpenShiftRuntime();
+  }
+  const open=typeof findOpenShift==='function'?findOpenShift():null;
+  if(open && !open.endedAt && !open.abandoned){
+    state.shift=open;
+    return open;
+  }
+  if(state.shift && !state.shift.endedAt && !state.shift.abandoned) return state.shift;
+  return null;
+}
+/** ЕТО «на сегодня» — тот же критерий, что строка «ЕТО на сегодня пройден» (день по Москве). */
+function driverIsEtoDoneToday(shift){
+  if(!shift) return false;
+  const sameDay=typeof isSameMoscowDay==='function'?isSameMoscowDay:isSameLocalDay;
+  if(shift.lockEto && typeof etoFieldsComplete==='function' && etoFieldsComplete(shift)) return true;
+  if(shift.completedAt && sameDay(shift.completedAt)) return true;
+  if(!sameDay(shift.startedAt)) return false;
+  if(typeof etoFieldsComplete==='function' && etoFieldsComplete(shift)) return true;
+  return !!(shift.vehiclePlate && shift.odometer!=null && shift.fuelLiters!=null
+    && (shift.gur||shift.powerSteeringLevel)
+    && (shift.coolant||shift.coolantLevel)
+    && (shift.oil||shift.engineOilLevel));
+}
+function driverEtoPanelShowsDone(){
+  const s=driverEtoShift();
+  if(!s) return false;
+  return driverIsEtoDoneToday(s) && !driverEtoFlowStep();
+}
 function driverEtoNeedsAttention(){
-  const s=state.shift||findOpenShift();
-  if(!s||s.endedAt) return !findOpenShift();
-  return !isEtoDone(s);
+  const s=driverEtoShift();
+  if(!s) return false;
+  return !driverEtoPanelShowsDone();
 }
 function updateDriverEtoBadge(){
   const badge=$('drv-eto-badge');
@@ -178,8 +209,10 @@ function showDriverHome(){
   hideDriverPanels();
   setDriverNav('btn-home');
   syncDriverMainVisibility();
+  if(typeof renderDriverBanner==='function') renderDriverBanner();
   updateDriverChrome();
   renderDriverHome();
+  updateDriverEtoBadge();
 }
 function showEto(){
   openDriverPanel('eto-panel','btn-eto');
@@ -210,15 +243,7 @@ function driverHomeStats(){
   });
   const done=today.filter(o=>looksClosedOrder(o));
   const active=driverHomeActiveOrders();
-  let km=0;
-  today.forEach(o=>{ const t=dayTotal(o); if(t!=null) km+=t; });
-  if(s && s.odometer!=null){
-    const end=s.lastOdometerPoint!=null?+s.lastOdometerPoint:(s.parkingOdometer!=null?+s.parkingOdometer:null);
-    if(end!=null && end>+s.odometer){
-      const byOdo=end-+s.odometer;
-      if(byOdo>km) km=byOdo;
-    }
-  }
+  const kmDisp=typeof driverDayKmDisplay==='function'?driverDayKmDisplay(s, today):{km:0,hint:''};
   let pay=0;
   today.forEach(o=>{ const p=effectivePay(o); if(p!=null) pay+=p; });
   let shiftCls='';
@@ -228,7 +253,7 @@ function driverHomeStats(){
     else if(!isEtoDone(s)){ shiftVal='ЕТО'; shiftCls='warn'; }
     else { shiftVal='Открыта'; shiftCls='ok'; }
   }
-  return {s, km:Math.round(km), done:done.length, activeCount:active.length, pay, shiftVal, shiftCls, active};
+  return {s, km:kmDisp.km, kmHint:kmDisp.hint, done:done.length, activeCount:active.length, pay, shiftVal, shiftCls, active};
 }
 function renderDriverHome(){
   const sumEl=$('driver-home-summary');
@@ -243,8 +268,8 @@ function renderDriverHome(){
   const st=driverHomeStats();
   sumEl.innerHTML=`
     <div class="m"><span>Смена</span><b class="${esc(st.shiftCls)}">${esc(st.shiftVal)}</b></div>
-    <div class="m"><span>Км сегодня</span><b>${esc(fmt(st.km))}</b></div>
-    <div class="m"><span>Заказы</span><b>${st.done}${st.activeCount?`+${st.activeCount}`:''}</b></div>
+    <div class="m"><span>Км сегодня</span>${typeof driverDayKmHtml==='function'?driverDayKmHtml({km:st.km,hint:st.kmHint}):`<b>${esc(st.km!=null?fmt(st.km):'—')}</b>`}</div>
+    <div class="m"><span>Заказы</span><b title="Закрытые за смену · активные в работе">${esc(driverHomeOrdersLabel(st.done, st.activeCount))}</b></div>
     <div class="m"><span>Заработок</span><b class="accent">${st.pay?esc(fmt(st.pay))+' ₽':'—'}</b></div>`;
   if(!st.active.length){
     listEl.innerHTML='';
@@ -275,7 +300,7 @@ function updateDriverChrome(){
   if(t){ t.textContent=DRIVER; t.title=firm?`${DRIVER} · ${firm}`:DRIVER; }
   if(sub) sub.textContent=firm||'';
   if(chip){
-    const s=state.shift||findOpenShift();
+    const s=driverEtoShift();
     if(s && !s.endedAt){
       const needClose=shiftAwaitingClose();
       const etoOk=isEtoDone(s);
@@ -401,11 +426,27 @@ async function tryDriverPhoneLogin(phone, showErr){
   showDriverPickStep(sorted);
 }
 function openDriverLogin(fromAdmin){
+  if(!fromAdmin && typeof restoreDriverSession==='function' && restoreDriverSession()){
+    const rec=findDriverRecord(DRIVER, DRIVER_COMPANY_ID)||findDriverRecord(DRIVER, null);
+    if(rec){ enterAsDriver(rec); return; }
+  }
   setDriverFromAdmin(!!fromAdmin);
-  migrateSpaces();
-  let dirty=ensureFleetPerSpaces();
-  if(migrateDriverPins()) dirty=true;
-  if(dirty){ bumpDataEpoch('driver-login-prep'); persist(); }
+  const guestDedicatedNoSession=
+    !fromAdmin
+    && typeof armadaDedicatedGuestNoSession==='function'
+    && armadaDedicatedGuestNoSession();
+  if(!guestDedicatedNoSession){
+    const sigBefore=typeof armadaStateComparableSig==='function'?armadaStateComparableSig():'';
+    migrateSpaces();
+    let dirty=ensureFleetPerSpaces();
+    if(migrateDriverPins()) dirty=true;
+    const sigAfter=typeof armadaStateComparableSig==='function'?armadaStateComparableSig():'';
+    if(dirty && sigBefore!==sigAfter){
+      if(typeof bumpDataEpochAuto==='function') bumpDataEpochAuto('driver-login-prep');
+      else bumpDataEpoch('driver-login-prep');
+      persist();
+    }
+  }
   DRIVER='';
   DRIVER_COMPANY_ID=null;
   resetDriverLoginUi();
@@ -459,6 +500,16 @@ async function doLoginDriverPin(showErr){
   if(!phone){ showErr('Введите телефон'); return; }
   if(!pin||pin.length<4){ showErr('Введите PIN (от 4 цифр)'); return; }
   let rec=driverLoginSelected;
+  const driverId=rec&&rec.id?rec.id:null;
+  if(navigator.onLine!==false && typeof armadaApiVerifyDriver==='function' && API_BASE){
+    const verified=await armadaApiVerifyDriver(phone, pin, driverId);
+    if(verified&&verified.driver){
+      rec=verified.driver;
+      const local=(state.drivers||[]).find(d=>d.id===rec.id)||rec;
+      enterAsDriver({...local, ...rec});
+      return;
+    }
+  }
   if(rec){
     if(formatPhone(rec.phone||'')!==phone){ showErr('Телефон не совпадает с выбранным профилем'); return; }
     if(resolveDriverPin(rec)!==pin){ showErr('Неверный PIN'); return; }
@@ -549,6 +600,7 @@ async function enterAsDriver(rec){
         renderInput();
         renderDriverBanner();
         renderDriverHome();
+        if(window.ArmadaOnboarding) ArmadaOnboarding.maybeDriver();
         if(document.querySelector('#orders-panel.show')&&typeof showOrders==='function') showOrders();
       }
       if(typeof ensureArmadaApiToken==='function'){
@@ -563,7 +615,19 @@ async function enterAsDriver(rec){
     }
   })();
 }
-function leaveDriverMode(){
+async function leaveDriverMode(){
+  if(typeof openShiftBlocksExit==='function' && openShiftBlocksExit()){
+    const ok=await armadaConfirm({
+      title:'Выйти из кабинета?',
+      message:'Смена открыта. Смена останется открытой — закройте её одометром на стоянке, когда закончите работу.',
+      okLabel:'Выйти',
+      cancelLabel:'Отмена'
+    });
+    if(!ok) return;
+  } else {
+    const ok=await armadaConfirm({title:'Выйти из кабинета?', message:'', okLabel:'Выйти', cancelLabel:'Отмена'});
+    if(!ok) return;
+  }
   clearDriverSession();
   state.shift=null; state.step='idle'; state.orderStep='idle'; state.messages=[]; state.draft={}; state.error='';
   if(isDriverFromAdmin() && restoreAdminSession()){
@@ -577,9 +641,56 @@ function leaveDriverMode(){
   }
 }
 /** Восстановить вход после обновления страницы (без повторного PIN). */
+/** Устаревший текст в сохранённых сообщениях — см. normalizeLegacyOrderDayInText (только UI). */
+function normalizeDriverChatMessageText(t){
+  if(typeof normalizeLegacyOrderDayInText==='function') return normalizeLegacyOrderDayInText(t);
+  return String(t??'');
+}
+function driverChatMessageDisplayText(t){
+  let s=String(t??'');
+  s=normalizeDriverChatMessageText(s);
+  if(typeof armadaLocalizeChatVisibleText==='function') s=armadaLocalizeChatVisibleText(s);
+  else if(typeof armadaUserFacingError==='function') s=armadaUserFacingError(s)||s;
+  return s;
+}
+/** Сообщения смены из sync — не переписываем text (persist не должен менять БД). */
+function driverNormalizeShiftMessages(list){
+  return (list||[]).slice();
+}
+function wireDriverChatInputs(){
+  if(typeof armadaRuFieldValidity!=='function') return;
+  armadaRuFieldValidity($('num'), 'Введите число');
+  armadaRuFieldValidity($('text'), 'Введите адрес');
+}
+function driverChatMessagesForDisplay(){
+  const list=(state.messages||[]).slice();
+  const s=state.shift||(typeof findOpenShift==='function'?findOpenShift():null);
+  const etoOk=s&&typeof isEtoDone==='function'?isEtoDone(s):false;
+  if(!etoOk) return list;
+  const stale=[
+    /ещё открыта — одометр стоянки/i,
+    /Новый день — нужно пройти ЕТО/i,
+    /Смена открыта, но ЕТО не завершён/i,
+    /Смена за .+ закрыта \(стоянка/i,
+    /Смена за .+ ещё открыта/i
+  ];
+  return list.filter(m=>{
+    const t=String(m.text||'');
+    return !stale.some(rx=>rx.test(t));
+  }).filter((m,i,arr)=>{
+    if(m.author!=='bot') return true;
+    const norm=driverChatMessageDisplayText(m.text);
+    for(let j=0;j<i;j++){
+      if(arr[j].author!=='bot') continue;
+      if(driverChatMessageDisplayText(arr[j].text)===norm) return false;
+    }
+    return true;
+  });
+}
 function renderChat(){
-  const n=state.messages.length;
-  const html=state.messages.map((m,i)=>`<div class="bubble ${m.author}${i===n-1?' bubble-in':''}">${esc(m.text)}</div>`).join('');
+  const visible=driverChatMessagesForDisplay();
+  const n=visible.length;
+  const html=visible.map((m,i)=>`<div class="bubble ${m.author}${i===n-1?' bubble-in':''}">${esc(driverChatMessageDisplayText(m.text))}</div>`).join('');
   const target=driverChatEl();
   if(target){
     target.innerHTML=html;
@@ -622,12 +733,42 @@ function lightsUI(){
       </div></div>`;
   }).join('')+`<button type="button" class="primary" id="lights-ok">Далее</button>`;
 }
+function driverNumInputAriaLabel(){
+  const os=state.orderStep;
+  if(os==='closePrevShiftParking'||os==='closeShiftParking') return 'Одометр на стоянке';
+  if(os==='departAssignedOdometer') return 'Одометр при выезде';
+  if(os==='arriveAssignedOdometer') return 'Одометр при прибытии';
+  if(os==='closingOdometer') return 'Одометр на выгрузке';
+  if(os==='fuelPrice') return 'Цена топлива за литр';
+  if(os==='fuelAmount') return 'Объём заправки, литры';
+  if(state.step==='odometer') return 'Показания одометра до выезда';
+  if(state.step==='fuel') return 'Остаток топлива, литры';
+  return 'Введите число';
+}
+function driverNumInputAttrs(extra){
+  return `id="num" aria-label="${esc(driverNumInputAriaLabel())}" ${extra||''}`;
+}
+function driverNumInputRow(extra, okLabel){
+  const lbl=esc(driverNumInputAriaLabel());
+  return `<div class="row driver-num-row"><label class="driver-odo-label" for="num">${lbl}</label><input ${driverNumInputAttrs(extra)} /><button type="button" id="num-ok">${esc(okLabel||'Готово')}</button></div>`;
+}
+function driverAddressInputRow(isLoading){
+  const lbl=isLoading?'Адрес загрузки':'Адрес выгрузки';
+  return `<div class="row driver-text-row"><label class="driver-odo-label" for="text">${esc(lbl)}</label><textarea id="text" rows="2" placeholder="Город, улица, дом, строение" aria-label="${esc(lbl)}"></textarea><button type="button" id="text-ok">Готово</button></div>`;
+}
+function driverHomeOrdersLabel(done, activeCount){
+  const parts=[];
+  if(activeCount>0) parts.push(`${activeCount} актив${activeCount===1?'ен':'но'}`);
+  if(done>0) parts.push(`${done} закрыт${done===1?'':'о'}`);
+  return parts.length?parts.join(' · '):'0';
+}
 function renderEtoPanel(){
   const body=$('eto-body');
   if(!body) return;
-  const err=state.error?`<div class="error">${esc(state.error)}</div>`:'';
+  const errMsg=state.error?(typeof armadaUserFacingError==='function'?armadaUserFacingError(state.error):state.error):'';
+  const err=errMsg?`<div class="error">${esc(errMsg)}</div>`:'';
   let html=err;
-  const s=state.shift||findOpenShift();
+  const s=driverEtoShift();
   if(!s||s.endedAt){
     html+=`<p class="hint">Ежедневный технический осмотр перед выездом. Откройте смену — осмотр начнётся здесь.</p>`;
     html+=`<button type="button" class="primary" id="open-shift-eto">Открыть смену</button>`;
@@ -635,7 +776,7 @@ function renderEtoPanel(){
     $('open-shift-eto')&&($('open-shift-eto').onclick=openShift);
     return;
   }
-  if(isEtoDone(s)&&!driverEtoFlowStep()){
+  if(driverEtoPanelShowsDone()){
     html+=`<p class="hint">ЕТО на сегодня пройден · ${esc(s.vehiclePlate||'авто')} · одометр ${esc(String(s.odometer??'—'))}</p>`;
     html+=renderEtoDepartQuickHtml(s);
     html+=`<details class="eto-restart-details"><summary class="hint">Повторить осмотр?</summary>
@@ -657,7 +798,7 @@ function renderEtoStepHtml(){
     const min=state.draft&&state.draft.prevMinOdo;
     const ph=min!=null?String(min):'Например, 165658';
     html+=`<div class="hint warn-close">Вчерашняя смена открыта — укажите одометр стоянки (он же станет ЕТО сегодня).</div>`;
-    html+=`<div class="row"><input id="num" inputmode="numeric" placeholder="${esc(ph)}" ${min!=null?`value="${esc(String(min))}"`:''} /><button id="num-ok">OK</button></div>`;
+    html+=driverNumInputRow(`inputmode="numeric" placeholder="${esc(ph)}" ${min!=null?`value="${esc(String(min))}"`:''}`);
     if(min!=null) html+=`<button class="secondary" id="eto-odo-keep">Как вчерашний последний: ${esc(String(min))}</button>`;
     return html;
   }
@@ -667,11 +808,11 @@ function renderEtoStepHtml(){
       const sug=state.shift&&state.shift.etoOdometerSuggest!=null?state.shift.etoOdometerSuggest:null;
       const ph=sug!=null?String(sug):'Например, 125430';
       html+=`<div class="hint">Показания одометра до выезда</div>`;
-      html+=`<div class="row"><input id="num" inputmode="numeric" placeholder="${esc(ph)}" ${sug!=null?`value="${esc(String(sug))}"`:''} /><button id="num-ok">OK</button></div>`;
+      html+=driverNumInputRow(`inputmode="numeric" placeholder="${esc(ph)}" ${sug!=null?`value="${esc(String(sug))}"`:''}`);
       if(sug!=null) html+=`<button class="secondary" id="eto-odo-keep">Как вчера: ${esc(String(sug))}</button>`;
     } else {
       html+=`<div class="hint">Остаток топлива, л</div>`;
-      html+=`<div class="row"><input id="num" inputmode="decimal" placeholder="Например, 42" /><button id="num-ok">OK</button></div>`;
+      html+=driverNumInputRow('inputmode="decimal" placeholder="Например, 42"');
     }
     html+=`<button class="secondary" id="eto-restart">Сбросить шаги осмотра</button>`;
     return html;
@@ -699,6 +840,7 @@ function wireEtoPanelInput(){
   $('eto-restart-panel')&&($('eto-restart-panel').onclick=restartEtoInspection);
   document.querySelectorAll('#eto-body .yesno button[data-key]').forEach(b=>b.onclick=()=>{state.light[b.dataset.key]=b.dataset.val;state.error='';renderEtoPanel();});
   $('lights-ok')&&($('lights-ok').onclick=submitLights);
+  wireDriverChatInputs();
 }
 function maybeAutoOpenEtoTab(){
   if(!DRIVER||!driverEtoFlowStep()) return;
@@ -709,7 +851,8 @@ function maybeAutoOpenEtoTab(){
 }
 function renderInput(){
   if(DRIVER&&typeof syncDriverOrderCopiesFromShifts==='function') syncDriverOrderCopiesFromShifts();
-  const err=state.error?`<div class="error">${esc(state.error)}</div>`:'';
+  const errMsg=state.error?(typeof armadaUserFacingError==='function'?armadaUserFacingError(state.error):state.error):'';
+  const err=errMsg?`<div class="error">${esc(errMsg)}</div>`:'';
   let html=err; const os=state.orderStep;
   if(driverEtoFlowStep()){
     renderEtoPanel();
@@ -729,17 +872,17 @@ function renderInput(){
     const sug=state.draft&&state.draft.closeShiftSuggestOdo!=null?state.draft.closeShiftSuggestOdo:null;
     const ph=sug!=null?String(sug):'Например, 277800';
     html+=`<div class="hint warn-close">Одометр на стоянке — смена закроется</div>`;
-    html+=`<div class="row"><input id="num" inputmode="numeric" placeholder="${esc(ph)}" ${sug!=null?`value="${esc(String(sug))}"`:''} /><button id="num-ok">OK</button></div>`;
+    html+=driverNumInputRow(`inputmode="numeric" placeholder="${esc(ph)}" ${sug!=null?`value="${esc(String(sug))}"`:''}`);
   } else if(os==='departAssignedOdometer'||os==='arriveAssignedOdometer'||os==='closingOdometer'){
     html+=driverOdometerStepHtml(os);
   } else if(os==='fuelPrice'||os==='fuelAmount'){
     const hint=os==='fuelPrice'?'Укажите стоимость литра (₽/л).':'Укажите количество литров.';
     html+=`<div class="hint driver-step-hint">${hint}</div>`;
     const ph=os==='fuelPrice'?'Например, 56.5':'Например, 40';
-    html+=`<div class="row"><input id="num" inputmode="decimal" placeholder="${ph}" /><button id="num-ok">OK</button></div>`;
+    html+=driverNumInputRow(`inputmode="decimal" placeholder="${ph}"`);
   } else if(os==='arrivalOdometer'||os==='startAssignedOdometer'){
     const ph='Например, 277690';
-    html+=`<div class="row"><input id="num" inputmode="decimal" placeholder="${ph}" /><button id="num-ok">OK</button></div>`;
+    html+=driverNumInputRow(`inputmode="decimal" placeholder="${ph}"`);
   } else if(os==='postCloseWhere'){
     html+=`<div class="hint warn-close">Если едете на стоянку — после этого закройте смену</div>`;
     html+=`<div class="hint">Куда дальше после выгрузки?</div><div class="yesno">
@@ -748,11 +891,19 @@ function renderInput(){
     </div>
     <button class="secondary" id="post-already-parked">Уже на стоянке (0 км после)</button>`;
   } else if(os==='dayNumber') html+=`<div class="hint">Номер заказа за день</div><div class="nums">${[1,2,3,4,5].map(n=>`<button data-day="${n}">${n}</button>`).join('')}</div>`;
-  else if(os==='loading'||os==='unloading') html+=`<div class="row"><textarea id="text" rows="2" placeholder="Город, улица, дом, строение"></textarea><button id="text-ok">OK</button></div>`;
+  else if(os==='loading'||os==='unloading') html+=driverAddressInputRow(os==='loading');
+  else if(os==='transportDocMode'){
+    html+=`<div class="hint driver-step-hint">Как оформляем документы на перевозку?</div>`;
+    html+=`<div class="yesno driver-tdoc-yesno">
+      <button type="button" class="primary" data-tdoc="paper_tn">ТН на бумаге</button>
+      <button type="button" class="secondary" data-tdoc="etrn">ЭТрН</button>
+    </div>`;
+    html+=`<div class="hint" style="margin-top:8px;font-size:.85rem">Бумага — бланк для печати, если у клиента нет своей накладной. ЭТрН: T1 — грузоотправитель; T2 и T4 — перевозчик (вы); T3 — грузополучатель.</div>`;
+  }
   else if(os==='closingSignT4'){
     const co=orderBeingClosed();
     const n=co&&co.sequentialNumber?co.sequentialNumber:'—';
-    html+=`<div class="hint">ЭТrН · T4 — выдача груза получателю на выгрузке. После подписи заказ №${esc(String(n))} закроется.</div>`;
+    html+=`<div class="hint">ЭТрН · T4 — подтверждение доставки на выгрузке. После подписи заказ №${esc(String(n))} закроется.</div>`;
     html+=`<button type="button" class="primary" id="closing-sign-t4">Подписать T4 и закрыть заказ</button>`;
     html+=`<button type="button" class="secondary" id="closing-etrn-operator">Подписать через оператора</button>`;
   } else if(os==='askRefuel'||os==='closeShiftStaysLoaded'){
@@ -777,8 +928,14 @@ function renderInput(){
         html+=`<button class="primary resume-close" data-id="${open.id}">Завершить заказ №${open.sequentialNumber}</button>`;
       } else {
         if(open.staysLoadedOvernight) html+=`<div class="hint">Заказ №${open.sequentialNumber} перенесён (машина загружена) — отметьте выгрузку.</div>`;
-        html+=`<div class="hint">На выгрузке — одометр, затем закрытие заказа. Смену — в конце дня.</div>`;
-        html+=`<button class="primary arrive-unload" data-id="${open.id}">Прибыл на выгрузку №${open.sequentialNumber}</button>`;
+        const leftLoad=typeof orderLeftLoading==='function'&&orderLeftLoading(open);
+        if(!leftLoad){
+          html+=`<div class="hint">На погрузке · заказ №${open.sequentialNumber}. После T1 (ГО) и T2 (приём) — «Выехал с погрузки».</div>`;
+          html+=`<button class="primary leave-loading" data-id="${open.id}">Выехал с погрузки №${open.sequentialNumber}</button>`;
+        } else {
+          html+=`<div class="hint">В работе · с грузом на выгрузку. На выгрузке — одометр, затем закрытие. Смену — в конце дня.</div>`;
+          html+=`<button class="primary arrive-unload" data-id="${open.id}">Прибыл на выгрузку №${open.sequentialNumber}</button>`;
+        }
       }
     } else {
       if(shiftAwaitingClose()){
@@ -817,9 +974,11 @@ function wireInput(){
   document.querySelectorAll('.fluid').forEach(b=>b.onclick=()=>selectFluid(b.dataset.level));
   $('eto-restart')&&($('eto-restart').onclick=restartEtoInspection);
   document.querySelectorAll('.yesno button[data-key]').forEach(b=>b.onclick=()=>{state.light[b.dataset.key]=b.dataset.val;state.error='';renderInput();});
+  document.querySelectorAll('[data-tdoc]').forEach(b=>b.onclick=()=>selectDriverTransportDocMode(b.dataset.tdoc));
   $('lights-ok')&&($('lights-ok').onclick=submitLights);
   $('create-order')&&($('create-order').onclick=startCreateOrder);
   document.querySelectorAll('.arrive-unload').forEach(b=>b.onclick=()=>startArriveUnloading(b.dataset.id));
+  document.querySelectorAll('.leave-loading').forEach(b=>b.onclick=()=>startLeaveLoading(b.dataset.id));
   document.querySelectorAll('.resume-close').forEach(b=>b.onclick=()=>resumeCloseAfterUnloading(b.dataset.id));
   $('close-shift')&&($('close-shift').onclick=startCloseShift);
   document.querySelectorAll('.depart-assigned').forEach(b=>b.onclick=()=>beginDepart(b.dataset.id));
@@ -848,15 +1007,18 @@ function wireInput(){
   $('post-next-order')&&($('post-next-order').onclick=()=>finishPostCloseWhere('next'));
   $('post-to-parking')&&($('post-to-parking').onclick=()=>finishPostCloseWhere('parking'));
   $('post-already-parked')&&($('post-already-parked').onclick=()=>finishPostCloseWhere('here'));
+  wireDriverChatInputs();
 }
 
 /** Сбросить незавершённый ЕТО в текущей смене и пройти заново. */
-function restartEtoInspection(){
+async function restartEtoInspection(){
   const shift=state.shift||findOpenShift();
   if(!shift || shift.endedAt) return;
-  if(isEtoDone(shift) && shift.completedAt){
-    if(!confirm('ЕТО уже пройден. Пройти осмотр заново?')) return;
-  } else if(!confirm('Начать ЕТО заново? Текущие ответы осмотра будут сброшены.')) return;
+  let ok=true;
+  ok=await armadaConfirm(isEtoDone(shift) && shift.completedAt
+    ? {title:'Повторить ЕТО?', message:'ЕТО на сегодня уже пройден. Пройти осмотр заново?', okLabel:'Повторить', cancelLabel:'Отмена'}
+    : {title:'Сбросить ЕТО?', message:'Текущие ответы осмотра будут сброшены.', okLabel:'Сбросить', cancelLabel:'Отмена'});
+  if(!ok) return;
   shift.completedAt=null;
   shift.odometer=null;
   shift.fuelLiters=null;
@@ -985,6 +1147,7 @@ function restoreOrderWorkflow(shift){
   }
   if(/адрес загрузки/i.test(t)){ state.orderStep='loading'; state.draft=Object.assign({}, shift.draft||{}); return true; }
   if(/адрес выгрузки/i.test(t)){ state.orderStep='unloading'; state.draft=Object.assign({}, shift.draft||{}); return true; }
+  if(/Как оформляем документы/i.test(t)){ state.orderStep='transportDocMode'; state.draft=Object.assign({}, shift.draft||{}); return true; }
   if(/Выберите автомобиль для заказа/i.test(t)){ state.orderStep='chooseVehicle'; state.draft={}; return true; }
   return false;
 }
@@ -998,7 +1161,7 @@ function resumeOpenShift(shift){
   }
   hydrateEtoFromMessages(shift);
   state.shift=shift;
-  state.messages=(shift.messages&&shift.messages.length)?shift.messages.slice():[];
+  state.messages=driverNormalizeShiftMessages(shift.messages&&shift.messages.length?shift.messages.slice():[]);
   state.orderStep='idle'; state.draft={}; state.error='';
   const stale=invalidateStaleEto(shift);
   state.light=shift.light||{};
@@ -1155,6 +1318,9 @@ function selectVehicle(plate){
   if(prevOdo!=null){
     state.shift.etoOdometerSuggest=prevOdo;
     add('bot',`Вы выбрали автомобиль с госномером ${plate}.\nВаш одометр на этой машине (стоянка прошлой смены): ${prevOdo}.\nЕсли не ездили — «Как вчера», иначе введите новый.`);
+  } else if(floor!=null){
+    state.shift.etoOdometerSuggest=floor;
+    add('bot',`Вы выбрали автомобиль с госномером ${plate}.\nПоследний известный одометр по машине: не меньше ${floor}.\nВведите показания до выезда со стоянки.`);
   } else {
     state.shift.etoOdometerSuggest=null;
     add('bot',`Вы выбрали автомобиль с госномером ${plate}.\nНапишите показания одометра до выезда со стоянки.`);
@@ -1230,8 +1396,10 @@ function submitNumber(){
   if(state.step==='odometer'){
     const digits=raw.replace(/\D/g,''); if(!digits){state.error='Введите целое число километров';renderInput();return;}
     const value=+digits;
-    const prev=state.shift.etoOdometerSuggest??state.shift.lastOdometerPoint;
-    if(prev!=null && value<+prev){ state.error=`Одометр не может быть меньше прошлого (${prev})`; renderInput(); return; }
+    const prev=typeof driverEtoOdometerMin==='function'?driverEtoOdometerMin(state.shift):(state.shift.etoOdometerSuggest??state.shift.lastOdometerPoint);
+    if(prev!=null && value<+prev){ state.error=`Одометр не может быть меньше последнего известного (${prev})`; renderInput(); return; }
+    const maxDelta=(typeof DRIVER_DAY_KM_MAX==='number'?DRIVER_DAY_KM_MAX:2000);
+    if(prev!=null && value-+prev>maxDelta){ state.error=`Пробег за день больше ${maxDelta} км — проверьте одометр`; renderInput(); return; }
     state.shift.odometer=value; state.shift.lastOdometerPoint=value;
     // Наоборот: этим же одометром ЕТО закрываем вчерашнюю незакрытую смену
     if(DRIVER && state.shift.vehiclePlate && closePreviousDayShiftsWithOdo(DRIVER, value, state.shift.vehiclePlate)){
@@ -1310,7 +1478,7 @@ function beginDepart(id, fromOrders){
     return true;
   }
   add('driver',`Выехал · заказ №${order.sequentialNumber}`);
-  add('bot',`Заказ №${order.sequentialNumber} (${orderDayLabel(order.dayNumber)})\nАвто: ${order.vehiclePlate}\nМаршрут: ${routeText(order)}\nВведите одометр при выезде (или отметьте на вкладке ЕТО).`);
+  add('bot',`Заказ №${order.sequentialNumber}${orderDayLabelSuffix(order.dayNumber)}\nАвто: ${order.vehiclePlate}\nМаршрут: ${routeText(order)}\nВведите одометр при выезде (или отметьте на вкладке ЕТО).`);
   state.orderStep='departAssignedOdometer'; state.error=''; state.step='done';
   upsertShift(); renderChat(); renderDriverBanner(); renderInput();
   focusDriverOdoInput();
@@ -1363,8 +1531,9 @@ function beginAssigned(id, fromOrders){
 }
 function showOrdersError(msg){
   const el=$('orders-error');
-  if(el) el.textContent=msg;
-  else state.error=msg;
+  const text=typeof armadaUserFacingError==='function'?armadaUserFacingError(msg):String(msg||'');
+  if(el) el.textContent=text;
+  else state.error=text;
 }
 function focusDriverOdoInput(){
   setTimeout(()=>{
@@ -1402,7 +1571,7 @@ function driverOdometerManualRow(ph, okLabel){
   const val=ph!=null?String(ph):'';
   return `<div class="driver-odo-row">
     <label class="driver-odo-label" for="num">Показания одометра</label>
-    <input id="num" inputmode="numeric" pattern="[0-9]*" autocomplete="off" placeholder="${esc(val||'Только цифры')}" ${val?`value="${esc(val)}"`:''} />
+    <input ${driverNumInputAttrs(`inputmode="numeric" pattern="[0-9]*" autocomplete="off" placeholder="${esc(val||'Только цифры')}" ${val?`value="${esc(val)}"`:''}`)} />
     <button type="button" class="primary" id="num-ok">${esc(okLabel||'Подтвердить')}</button>
   </div>`;
 }
@@ -1416,7 +1585,7 @@ function driverOdometerStepHtml(os){
     const manual=!!(state.draft&&state.draft.manualDepartOdo);
     let hint=`<div class="hint driver-step-hint">Заказ №${o?o.sequentialNumber:'?'} · выезд со стоянки.</div>`;
     if(eto!=null&&!manual){
-      return hint+`<button type="button" class="primary driver-odo-main" id="depart-eto-confirm">Выехал · ${eto} км<br><span class="sub">тот же одометр, что при ЕТО</span></button>
+      return hint+`<button type="button" class="primary driver-odo-main" id="depart-eto-confirm">Выехать · ${eto} км<br><span class="sub">тот же одометр, что при ЕТО — нажмите при выезде</span></button>
         <button type="button" class="secondary" id="depart-manual-odo">Другой одометр (уже ездил)</button>`;
     }
     hint=`<div class="hint driver-step-hint">Заказ №${o?o.sequentialNumber:'?'}: введите одометр на момент выезда.${floor!=null?` Не меньше ${floor}.`:''}</div>`;
@@ -1436,7 +1605,7 @@ function driverOdometerStepHtml(os){
     const hint=`<div class="hint driver-step-hint">Заказ №${order?order.sequentialNumber:'?'}: одометр по прибытию на выгрузку.${min!=null?` Не меньше ${min}.`:''}</div>`;
     return hint+driverOdometerManualRow(min!=null?String(min):ph,'Подтвердить');
   }
-  return driverOdometerManualRow(ph,'OK');
+  return driverOdometerManualRow(ph,'Готово');
 }
 function renderEtoDepartQuickHtml(shift){
   const pending=assignedPending();
@@ -1449,9 +1618,9 @@ function renderEtoDepartQuickHtml(shift){
       <div class="eto-depart-title">Заказ №${o.sequentialNumber}</div>
       <div class="eto-depart-route">${esc(routeText(o))}</div>`;
     if(eto!=null){
-      html+=`<button type="button" class="primary eto-depart-go" data-id="${esc(o.id)}">Выехал · ${eto} км (как ЕТО)</button>`;
+      html+=`<button type="button" class="primary eto-depart-go" data-id="${esc(o.id)}">Выехать · ${eto} км<br><span class="sub">тот же одометр, что при ЕТО — нажмите при выезде</span></button>`;
     } else {
-      html+=`<button type="button" class="primary eto-depart-go" data-id="${esc(o.id)}">Выехал · указать одометр</button>`;
+      html+=`<button type="button" class="primary eto-depart-go" data-id="${esc(o.id)}">Выехать · указать одометр</button>`;
     }
     html+=`</div>`;
   });
@@ -1484,6 +1653,7 @@ function acceptDepart(value){
   const etoNote=shift.odometer!=null&&+value===+shift.odometer?' (как при ЕТО на стоянке)':'';
   add('bot',`Выезд зафиксирован🔔\n№${order.sequentialNumber}\nОдометр выезда: ${value}${etoNote}\nВремя: ${dateTime(order.departAt)}\n\nПо прибытии на загрузку нажмите «Прибыл на загрузку».`);
   state.draft={}; state.orderStep='idle'; state.error=''; upsertShift(); persist(); renderInput(); renderDriverBanner();
+  if(typeof renderDriverHome==='function') renderDriverHome();
   if(typeof persistOrderAssignmentImmediate==='function') persistOrderAssignmentImmediate().catch(()=>{});
   if(document.querySelector('#orders-panel.show')&&typeof showOrders==='function') showOrders();
 }
@@ -1510,10 +1680,35 @@ function acceptArrive(value){
   const tTo=order.timeToOrderMin!=null?`\nВремя до заказа: ${formatDurationMin(order.timeToOrderMin)}`:'';
   const linkNote=linked?`\nУ заказа №${linked.sequentialNumber} «до стоянки» = ${order.emptyKmBefore} км (как нулевой до этого).`:'';
   if(typeof ensureEtrnForOrder==='function') ensureEtrnForOrder(order, {silent:true});
-  if(typeof signEtrnTitulsAtLoading==='function') signEtrnTitulsAtLoading(order.id);
-  add('bot',`Заявка в работе🔔\n\n№${order.sequentialNumber} · ${orderDayLabel(order.dayNumber)}\n${routeText(order)}\nОдометр на загрузке: ${value}\nНулевой до заказа: ${order.emptyKmBefore} км${tTo}${linkNote}\n\nЭТрН: T2 (перевозчик) подписан. T1 — грузоотправитель в личном кабинете. T3 — водитель после подписи T1.`);
-  add('bot','Когда приедете на выгрузку — нажмите «Прибыл на выгрузку» и введите одометр.');
+  add('bot',`На погрузке🔔\n\n№${order.sequentialNumber}${orderDayLabelSuffix(order.dayNumber)}\n${routeText(order)}\nОдометр на загрузке: ${value}\nНулевой до заказа: ${order.emptyKmBefore} км${tTo}${linkNote}\n\nЭТрН: T1 — грузоотправитель; T2 (приём) — вы, до «Выехал с погрузки». На выгрузке T3 — грузополучатель, T4 (подтверждение доставки) — вы.`);
+  add('bot','После T1 и T2 нажмите «Выехал с погрузки». На выгрузке — «Прибыл на выгрузку».');
   state.draft={}; state.orderStep='idle'; state.error=''; upsertShift(); persist(); renderInput(); renderDriverBanner();
+  if(typeof renderDriverHome==='function') renderDriverHome();
+  if(typeof persistOrderAssignmentImmediate==='function') persistOrderAssignmentImmediate().catch(()=>{});
+  if(document.querySelector('#orders-panel.show')&&typeof showOrders==='function') showOrders();
+}
+/** Выехал с погрузки — движение с грузом на выгрузку («В работе»). */
+function startLeaveLoading(orderId){
+  syncOpenShiftRuntime();
+  const order=orderId?orderById(orderId):inProgressOrder();
+  if(!order||order.startOdometer==null){ state.error='Сначала «Прибыл на загрузку»'; renderInput(); return; }
+  if(typeof orderLeftLoading==='function'&&orderLeftLoading(order)){
+    state.error='Уже выехали с погрузки'; renderInput(); return;
+  }
+  if(typeof orderTransportDocUsesEtrn==='function'&&orderTransportDocUsesEtrn(order)){
+    if(typeof orderEtrnReadyForLeaveLoading==='function'){
+      const gate=orderEtrnReadyForLeaveLoading(order);
+      if(!gate.ok){ state.error=gate.message; renderInput(); return; }
+    } else if(typeof orderEtrnTitulSigned==='function'&&!orderEtrnTitulSigned(order,'t2')){
+      state.error='Сначала подпишите T2 (приём груза перевозчиком на погрузке)'; renderInput(); return;
+    }
+  }
+  order.loadedDepartAt=new Date().toISOString();
+  upsertOrder(order);
+  add('driver',`Выехал с погрузки · заказ №${order.sequentialNumber}`);
+  add('bot',`В работе🔔\n№${order.sequentialNumber}\nЕдете с грузом на выгрузку.\nПо прибытии — «Прибыл на выгрузку» и одометр.`);
+  state.error=''; upsertShift(); persist(); renderInput(); renderDriverBanner();
+  if(typeof renderDriverHome==='function') renderDriverHome();
   if(typeof persistOrderAssignmentImmediate==='function') persistOrderAssignmentImmediate().catch(()=>{});
   if(document.querySelector('#orders-panel.show')&&typeof showOrders==='function') showOrders();
 }
@@ -1526,6 +1721,7 @@ function acceptUnloadingOdometer(order, value){
   if(!order||order.startOdometer==null){ state.error='Нет одометра на погрузке'; renderInput(); return; }
   if(value<order.startOdometer){ state.error=`Одометр на выгрузке не может быть меньше одометра на погрузке (${order.startOdometer})`; renderInput(); return; }
   const now=new Date().toISOString();
+  if(!order.loadedDepartAt) order.loadedDepartAt=now;
   order.endOdometer=value;
   order.loadedKm=value-order.startOdometer;
   order.endAt=now;
@@ -1594,7 +1790,10 @@ function continueDriverOrder(orderId, fromOrders){
   if(typeof orderEnRouteToLoading==='function'&&orderEnRouteToLoading(order)) return beginArrive(order.id, fromOrders);
   if(order.startOdometer==null && !order.departOdometer && !order.departAt) return beginDepart(order.id, fromOrders);
   if(typeof orderAwaitingFinalize==='function'&&orderAwaitingFinalize(order)) return resumeCloseAfterUnloading(order.id);
-  if(typeof orderAfterLoadingArrival==='function'&&orderAfterLoadingArrival(order)) return startArriveUnloading(order.id);
+  if(typeof orderAfterLoadingArrival==='function'&&orderAfterLoadingArrival(order)){
+    if(typeof orderLeftLoading==='function'&&!orderLeftLoading(order)) return startLeaveLoading(order.id);
+    return startArriveUnloading(order.id);
+  }
   if(fromOrders) showOrdersError('Действие недоступно — откройте «Главная».');
 }
 function startCreateOrder(){
@@ -1638,7 +1837,7 @@ function startCloseOrder(){
   if(!state.draft.closingOrderId) state.draft.closingOrderId=order.id;
   if(!state.draft.plate) state.draft.plate=order.vehiclePlate||(state.shift&&state.shift.vehiclePlate)||'';
   add('driver',`Прибыл на выгрузку · заказ №${order.sequentialNumber}`);
-  add('bot',`Заказ №${order.sequentialNumber} (${orderDayLabel(order.dayNumber)}).\nВведите одометр по прибытию на выгрузку.`);
+  add('bot',`Заказ №${order.sequentialNumber}${orderDayLabelSuffix(order.dayNumber)}.\nВведите одометр по прибытию на выгрузку.`);
   state.orderStep='closingOdometer'; state.error=''; upsertShift(); persist(); renderInput();
 }
 function startCloseShift(){
@@ -1653,7 +1852,12 @@ function startCloseShift(){
     if(en){
       state.error=`Сначала «Прибыл на загрузку» по №${en.sequentialNumber}. Смену закроете после выгрузки и стоянки.`;
     } else if(open){
-      state.error=`Сначала «Прибыл на выгрузку» по №${open.sequentialNumber}. Смену — после стоянки.`;
+      const left=typeof orderLeftLoading==='function'&&orderLeftLoading(open);
+      if(!left){
+        state.error=`Сначала «Выехал с погрузки» по №${open.sequentialNumber}, затем выгрузка. Смену — после стоянки.`;
+      } else {
+        state.error=`Сначала «Прибыл на выгрузку» по №${open.sequentialNumber}. Смену — после стоянки.`;
+      }
     } else if(pend.length){
       state.error=`Сначала завершите заказ №${pend[0].sequentialNumber} (выезд → погрузка → выгрузка).`;
     } else {
@@ -1787,7 +1991,7 @@ function acceptClosingSignT4(){
     const by=typeof DRIVER!=='undefined'&&DRIVER?DRIVER:'водитель';
     if(typeof signEtrnTitulSandboxAuto==='function') signEtrnTitulSandboxAuto(order.id,'t4',by);
     else if(typeof signEtrnTitul==='function') signEtrnTitul(order.id,'t4',by);
-    add('driver','T4 · выдача на выгрузке');
+    add('driver','T4 · подтверждение доставки');
   }
   retryFinalizeAfterT4Sign();
 }
@@ -1865,6 +2069,7 @@ function finalizeClose(refueled,price,liters){
   clearTimeout(persistTimer);
   pushServerStateQueued().then(()=>{ if(typeof applySyncPushSuccess==='function') applySyncPushSuccess(); else syncStatus='ok'; }).catch(err=>{ if(typeof applySyncPushFailure==='function') applySyncPushFailure(err, 'PB close push'); else { syncStatus='error'; console.warn('PB close push', err); } });
   renderInput();
+  if(typeof renderDriverHome==='function') renderDriverHome();
 }
 /** После закрытия: следующий заказ / стоянка / уже на стоянке — без повторного одометра. */
 function finishPostCloseWhere(where){
@@ -1936,11 +2141,29 @@ function finishPostCloseWhere(where){
   pushServerStateQueued().then(()=>{ if(typeof applySyncPushSuccess==='function') applySyncPushSuccess(); else syncStatus='ok'; }).catch(err=>{ if(typeof applySyncPushFailure==='function') applySyncPushFailure(err, 'PB post-where push'); else { syncStatus='error'; console.warn('PB post-where push', err); } });
   renderInput();
 }
-function selectDayNumber(n){ state.draft.dayNumber=n; add('driver',`Заказ ${orderDayLabel(n)}`); add('bot','Укажите адрес загрузки в виде: Город, адрес, номер дома, строение.'); state.orderStep='loading'; state.error=''; upsertShift(); renderInput(); }
+function selectDayNumber(n){ state.draft.dayNumber=n; add('driver',n<2?'Заказ за смену':orderDayLabel(n)); add('bot','Укажите адрес загрузки в виде: Город, адрес, номер дома, строение.'); state.orderStep='loading'; state.error=''; upsertShift(); renderInput(); }
 function submitText(){
   const text=($('text')?.value||'').trim(); if(!text){state.error='Введите адрес';renderInput();return;}
   if(state.orderStep==='loading'){ state.draft.loading=text; add('driver',text); add('bot','Укажите адрес выгрузки в виде: Город, адрес, номер дома, строение.'); state.orderStep='unloading'; state.error=''; upsertShift(); renderInput(); return; }
-  if(state.orderStep==='unloading') finishOrder(text);
+  if(state.orderStep==='unloading'){
+    state.draft.unloading=text;
+    add('driver',text);
+    add('bot','Как оформляем документы на перевозку?\n· ТН на бумаге — бланк для печати (если у клиента нет своей).\n· ЭТрН: T1 — грузоотправитель (КЭП); T2 — вы на погрузке; T3 — грузополучатель; T4 — вы на выгрузке.');
+    state.orderStep='transportDocMode';
+    state.error='';
+    upsertShift();
+    renderInput();
+    return;
+  }
+}
+function selectDriverTransportDocMode(mode){
+  if(mode!=='paper_tn'&&mode!=='etrn') return;
+  const unloading=state.draft&&state.draft.unloading;
+  if(!unloading){ state.error='Сначала укажите адрес выгрузки'; renderInput(); return; }
+  state.draft.transportDocMode=mode;
+  const label=mode==='paper_tn'?'ТН на бумаге':'ЭТрН';
+  add('driver',label);
+  finishOrder(unloading);
 }
 function finishOrder(unloading){
   const d=state.draft; const seqNo=nextSequentialNumber(); const createdAt=new Date().toISOString();
@@ -1978,7 +2201,8 @@ function finishOrder(unloading){
     driverPercent:driverPercent(DRIVER, bind.ownCompanyId||DRIVER_COMPANY_ID),
     ownerAdminId:bind.ownerAdminId, ownerAdminName:bind.ownerAdminName,
     spaceId:bind.spaceId, ownCompanyId:bind.ownCompanyId||DRIVER_COMPANY_ID, ownCompanyName:bind.ownCompanyName,
-    executorType:'own', onExchange:false
+    executorType:'own', onExchange:false,
+    transportDocMode:(d.transportDocMode==='paper_tn'||d.transportDocMode==='etrn')?d.transportDocMode:'etrn'
   };
   stampOrderDriverPhone(order);
   ensureRoutePoints(order);
@@ -1987,7 +2211,11 @@ function finishOrder(unloading){
   bumpDataEpoch('driver-create-order');
   upsertOrder(order);
   const route=routeText(order);
-  add('bot',`Заявка оформлена🔔\n\nИнформация о заявке❗\n🔵Номер заказа ${orderDayLabel(order.dayNumber)}\n🔵Порядковый номер - ${order.sequentialNumber}\n🔵Дата - ${dateTime(createdAt)}\n🔵Водитель - ${order.driverName}\n🔵Автомобиль - ${order.vehiclePlate}\n🔵Маршрут - ${route}\n🔵Статус - Назначен`);
+  const docLbl=typeof orderTransportDocModeLabel==='function'?orderTransportDocModeLabel(order):'ЭТрН';
+  add('bot',`Заявка оформлена🔔\n\nИнформация о заявке❗\n🔵Номер заказа${orderDayLabelSuffix(order.dayNumber)||' за смену'}\n🔵Порядковый номер - ${order.sequentialNumber}\n🔵Дата - ${dateTime(createdAt)}\n🔵Водитель - ${order.driverName}\n🔵Автомобиль - ${order.vehiclePlate}\n🔵Маршрут - ${route}\n🔵Документы - ${docLbl}\n🔵Статус - Назначен`);
+  if(order.transportDocMode==='paper_tn'){
+    add('bot','На погрузке — бумажная ТН. Логист дополнит грузоотправителя и груз в карточке. Бланк: кнопка «Печать бланка ТН» в заявке или у логиста в «Документы».');
+  }
   add('bot','Когда выезжаете со стоянки — нажмите «Выехал». По прибытии на загрузку — «Прибыл на загрузку».');
   state.draft={}; state.orderStep='idle'; state.error=''; upsertShift();
   persist();
@@ -2030,7 +2258,7 @@ function driverProfilePlate(){
 }
 function showCabinet(){
   openDriverPanel('cabinet-panel','btn-cabinet');
-  const mine=allOrders().filter(o=>orderBelongsToDriver(o));
+  const mine=typeof driverPortalOrders==='function'?driverPortalOrders():allOrders().filter(o=>orderBelongsToDriver(o));
   const paid=mine.filter(o=>effectivePay(o)!=null).sort((a,b)=>new Date(payDate(b))-new Date(payDate(a)));
   const pending=mine.filter(o=>looksClosedOrder(o) && effectivePay(o)==null).sort((a,b)=>new Date(payDate(b))-new Date(payDate(a)));
   const total=paid.reduce((s,o)=>s+(effectivePay(o)||0),0);
@@ -2044,6 +2272,7 @@ function showCabinet(){
   const license=rec&&rec.licenseNo?String(rec.licenseNo).trim():'';
   const licenseIssued=rec&&rec.licenseIssuedAt?String(rec.licenseIssuedAt).trim():'';
   const shiftsN=(state.shifts||[]).filter(s=>samePersonName(s.driverName, DRIVER)).length;
+  const ordersN=mine.length;
   const closedN=mine.filter(o=>looksClosedOrder(o)).length;
   let html='';
   if(typeof epdSignCardHtml==='function'){
@@ -2051,7 +2280,7 @@ function showCabinet(){
   }
   const etrnBlock=typeof driverEtrnBannerHtml==='function'?driverEtrnBannerHtml():'';
   if(etrnBlock){
-    html+=`<div class="drv-section-label">ЭТrН</div><div class="driver-etrn-profile-block">${etrnBlock}</div>`;
+    html+=`<div class="drv-section-label">ЭТрН</div><div class="driver-etrn-profile-block">${etrnBlock}</div>`;
   }
   html+=`<div class="drv-earn">
     <span class="lbl">Профиль водителя</span>
@@ -2072,10 +2301,13 @@ function showCabinet(){
   }
   html+=`<div class="drv-profile-stats">
     <div class="m"><span>Смен</span><b>${shiftsN}</b></div>
-    <div class="m"><span>Заказов</span><b>${closedN}</b></div>
+    <div class="m"><span>Заказов</span><b>${ordersN}</b></div>
     <div class="m"><span>Начислено</span><b class="accent">${esc(fmt(total))} ₽</b></div>
     <div class="m"><span>Ждут расчёта</span><b>${pending.length}</b></div>
   </div>`;
+  if(closedN<ordersN){
+    html+=`<div class="hint" style="margin-top:4px">Закрыто: ${closedN} · в работе или назначено: ${ordersN-closedN}</div>`;
+  }
   if(!paid.length && !pending.length){
     html+=`<div class="empty">После закрытия заказа и расчёта администратором суммы появятся здесь.</div>`;
   } else {
@@ -2083,7 +2315,7 @@ function showCabinet(){
       html+=`<div class="drv-section-label">Начисления</div>`;
       html+=paid.slice(0,20).map(o=>`<div class="drv-pay-row">
         <div>
-          <div class="name">№${o.sequentialNumber} · ${esc(orderDayLabel(o.dayNumber))}</div>
+          <div class="name">№${o.sequentialNumber}${esc(orderDayLabelSuffix(o.dayNumber))}</div>
           <div class="meta">${esc(dayOnly(payDate(o)))} · ${esc(o.vehiclePlate||'—')}<br>${esc(routeText(o))}</div>
         </div>
         <div class="amt">${fmt(effectivePay(o))} ₽</div>
@@ -2093,7 +2325,7 @@ function showCabinet(){
       html+=`<div class="drv-section-label">Ожидают расчёта</div>`;
       html+=pending.slice(0,12).map(o=>`<div class="drv-pay-row">
         <div>
-          <div class="name">№${o.sequentialNumber} · ${esc(orderDayLabel(o.dayNumber))}</div>
+          <div class="name">№${o.sequentialNumber}${esc(orderDayLabelSuffix(o.dayNumber))}</div>
           <div class="meta">${esc(dayOnly(payDate(o)))} · ЗП ещё не начислена</div>
         </div>
         <div class="amt" style="color:var(--muted);font-weight:600">—</div>
@@ -2165,13 +2397,19 @@ function driverOrderCardHtml(o, opts){
   const acts=[];
   const needContinue=!closed && (canDepart||canArrive||inWork||awaiting);
   if(needContinue) acts.push(`<button type="button" class="secondary drv-act-continue" data-id="${esc(o.id)}">Продолжить на главной</button>`);
+  if(typeof orderTransportDocMode==='function'&&orderTransportDocMode(o)==='paper_tn'&&typeof printOrderDoc==='function'){
+    acts.push(`<button type="button" class="secondary drv-print-tn" data-id="${esc(o.id)}">Печать бланка ТН</button>`);
+  }
   if(canContact){
     acts.push(`<a class="drv-link" href="tel:${esc(phone)}">Позвонить</a>`);
-    acts.push(`<a class="drv-link" href="sms:${esc(phone)}">SMS</a>`);
+    acts.push(`<a class="drv-link" href="sms:${esc(phone)}">СМС</a>`);
   }
+  const docLbl=typeof orderTransportDocModeLabel==='function'?orderTransportDocModeLabel(o):'ЭТрН';
+  const docLine=`<div class="meta">Документ: ${esc(docLbl==='Бумажная ТН'?'бумажная ТН':docLbl)}</div>`;
   return `<div class="drv-order-card${opts.compact?' drv-active-card':''}" data-order-card="${esc(o.id)}">
-    <h3>Заказ №${o.sequentialNumber}${o.dayNumber!=null?` · ${esc(orderDayLabel(o.dayNumber))}`:''}</h3>
+    <h3>Заказ №${o.sequentialNumber}${esc(orderDayLabelSuffix(o.dayNumber))}</h3>
     <div class="st ${stCls}">${esc(statusText(o))}</div>
+    ${docLine}
     ${driverOrderPointsHtml(o)}
     <div class="meta">${esc(o.vehiclePlate||'—')}${o.vehicleAt?` · подача ${esc(formatRuDateTimeAt(o.vehicleAt))}`:''}</div>
     ${o.freeAt||o.vehicleAt?`<div class="meta">${o.freeAt?`Освобождение: ${esc(formatRuDateTimeAt(o.freeAt||computeFreeAt(o.vehicleAt,o,financeForOrder(o))))}`:''}</div>`:''}
@@ -2195,6 +2433,11 @@ function wireDriverOrderCards(root){
       if(typeof openDriverEtrnSign==='function') openDriverEtrnSign(b.dataset.id);
     };
   });
+  root.querySelectorAll('.drv-print-tn').forEach(b=>{
+    b.onclick=()=>{
+      if(typeof printOrderDoc==='function') printOrderDoc(b.dataset.id,'paperTn');
+    };
+  });
 }
 /** Подсказка в Заявках — по состоянию открытых заказов. */
 function driverOrdersActionHint(openOrders){
@@ -2213,14 +2456,14 @@ function driverOrdersActionHint(openOrders){
 function showOrders(){
   if(typeof syncDriverOrderCopiesFromShifts==='function') syncDriverOrderCopiesFromShifts();
   openDriverPanel('orders-panel','btn-orders');
-  const mine=allOrders().filter(o=>orderBelongsToDriver(o) && !o.onExchange);
+  const mine=typeof driverPortalOrders==='function'?driverPortalOrders():allOrders().filter(o=>orderBelongsToDriver(o) && !o.onExchange);
   const board=driverExchangeEnabled(DRIVER)?exchangeOrders():[];
   let html='';
   if(board.length){
     html+=`<div class="drv-section-label">Биржа</div>`;
     html+=`<div class="orders-hint">Логист ищет машину. Если вы владелец и сами за рулём — берите заказ здесь: планированием занимается логист.</div>`;
     html+=board.map(o=>`<div class="drv-order-card" style="margin-bottom:8px">
-      <h3>№${o.sequentialNumber} · ${esc(orderDayLabel(o.dayNumber))}</h3>
+      <h3>№${o.sequentialNumber}${esc(orderDayLabelSuffix(o.dayNumber))}</h3>
       <div class="st wait">На бирже</div>
       ${driverOrderPointsHtml(o)}
       <div class="meta">${o.vehicleAt?`Подача ${esc(formatRuDateTimeAt(o.vehicleAt))}`:esc(dateTime(o.createdAt))}</div>
@@ -2354,29 +2597,38 @@ function driverHistoryDayBundles(){
     byDay.get(key).shifts.push(s);
     (s.orders||[]).forEach(o=>{
       const full=(state.orders||[]).find(x=>x.id===o.id)||o;
-      if(full && !byDay.get(key).orders.some(x=>x.id===full.id)) byDay.get(key).orders.push(full);
+      if(!full) return;
+      if(typeof orderBelongsToDriver==='function'&&!orderBelongsToDriver(full)) return;
+      const closeKey=full.closedAt?dayKeyFromIso(full.closedAt):null;
+      if(closeKey && closeKey!==key) return;
+      const b=byDay.get(key);
+      if(!b.orders.some(x=>x.id===full.id)) b.orders.push(full);
     });
   });
-  // заказы водителя без смены — тоже в день
-  (state.orders||[]).filter(o=>orderBelongsToDriver(o) && !o.cancelledAt).forEach(o=>{
+  // заказы водителя без смены — в день закрытия / создания
+  (state.orders||[]).filter(o=>driverHistEligibleOrder(o)).forEach(o=>{
     const key=dayKeyFromIso(o.closedAt||o.createdAt)||'без-даты';
     if(!byDay.has(key)) byDay.set(key,{dayKey:key, shifts:[], orders:[]});
     const b=byDay.get(key);
     if(!b.orders.some(x=>x.id===o.id)) b.orders.push(o);
   });
   return [...byDay.values()].map(b=>{
-    const orders=b.orders.slice().sort((a,c)=>(a.sequentialNumber||0)-(c.sequentialNumber||0));
-    let km=0, pay=0;
+    const orders=b.orders.filter(o=>driverHistEligibleOrder(o)).slice().sort((a,c)=>(a.sequentialNumber||0)-(c.sequentialNumber||0));
+    let pay=0;
+    const openShift=b.shifts.find(s=>!s.endedAt);
+    const shiftForKm=openShift||b.shifts[0]||null;
+    const kmDisp=typeof driverDayKmDisplay==='function'?driverDayKmDisplay(shiftForKm, orders):{km:0,hint:''};
+    const payIds=new Set();
     orders.forEach(o=>{
-      const t=dayTotal(o); if(t!=null) km+=t;
+      if(payIds.has(o.id)) return;
+      payIds.add(o.id);
       const p=effectivePay(o); if(p!=null) pay+=p;
     });
-    const openShift=b.shifts.some(s=>!s.endedAt);
     const label=b.shifts[0]?dayOnly(b.shifts[0].startedAt):(orders[0]?dayOnly(orders[0].closedAt||orders[0].createdAt):b.dayKey);
     const plate=(b.shifts.find(s=>s.vehiclePlate)||{}).vehiclePlate||(orders[0]&&orders[0].vehiclePlate)||'—';
     return {
-      id:b.dayKey, dayKey:b.dayKey, label, plate, openShift,
-      shifts:b.shifts, orders, km:Math.round(km), pay, count:orders.length
+      id:b.dayKey, dayKey:b.dayKey, label, plate, openShift:!!openShift,
+      shifts:b.shifts, orders, km:kmDisp.km, kmHint:kmDisp.hint, pay, count:orders.length
     };
   }).sort((a,b)=>String(b.dayKey).localeCompare(String(a.dayKey)));
 }
@@ -2484,13 +2736,14 @@ function showShifts(){
     return;
   }
   const shiftsN=days.reduce((n,d)=>n+d.shifts.length,0);
-  const ordersN=days.reduce((n,d)=>n+d.count,0);
-  const kmN=days.reduce((n,d)=>n+d.km,0);
+  const ordersN=typeof driverHistUniqueOrderCount==='function'?driverHistUniqueOrderCount(days):days.reduce((n,d)=>n+d.count,0);
+  const kmN=days.reduce((n,d)=>n+(d.km!=null?d.km:0),0);
+  const kmPeriodDisp={ km: kmN, hint: days.some(d=>d.kmHint)?'проверьте одометр ЕТО':'' };
   let html=driverHistCalHtml(allDays);
   html+=`<div class="drv-hist-stats">
     <div class="m"><span>Смен</span><b>${shiftsN}</b></div>
     <div class="m"><span>Заказов</span><b>${ordersN}</b></div>
-    <div class="m"><span>Км</span><b class="accent">${esc(fmt(kmN))}</b></div>
+    <div class="m"><span>Км</span>${typeof driverDayKmHtml==='function'?driverDayKmHtml(kmPeriodDisp):`<b class="accent">${esc(fmt(kmN))}</b>`}</div>
   </div>`;
   html+=`<div class="drv-section-label">${cal.from?'Выбранный период':'По дням'}</div>`;
   if(!days.length){
@@ -2507,7 +2760,7 @@ function showShifts(){
         <div class="meta">${esc(d.plate)} · ${esc(shiftNote)}</div>
         <div class="tot">
           <span>Заказов: <b>${d.count}</b></span>
-          <span>Км: <b>${esc(fmt(d.km))}</b></span>
+          <span>Км: ${typeof driverDayKmHtml==='function'?driverDayKmHtml({km:d.km,hint:d.kmHint}):`<b>${esc(d.km!=null?fmt(d.km):'—')}</b>`}</span>
           <span>ЗП: <b>${d.pay?esc(fmt(d.pay))+' ₽':'—'}</b></span>
         </div>
         ${open?`<div class="drv-hist-details">${d.orders.length?d.orders.map(o=>driverOrderCardHtml(o,{compact:true})).join(''):`<div class="empty">Нет заказов за день</div>`}</div>`:''}

@@ -6,16 +6,19 @@ let adminDocsSearch = '';
 let adminDocsConstructorTpl = 'application';
 let adminDocsConstructorOrderId = '';
 
+const ADMIN_LEGAL_PDF_SOON = true;
+
 const ADMIN_LEGAL_DOCS = [
-  { id: 'full', n: '📦', title: 'Полный юридический пакет', meta: 'Все 7 документов одним PDF', href: 'legal-pdf/ARMADA_Legal_Package_Full.pdf' },
-  { id: '01', n: '01', title: 'Публичная оферта SaaS', meta: 'Главный договор с клиентом сервиса', href: 'legal-pdf/01-public-offer.pdf' },
-  { id: '02', n: '02', title: 'Политика конфиденциальности (152-ФЗ)', meta: 'Для сайта и портала заказчика', href: 'legal-pdf/02-privacy-policy.pdf' },
-  { id: '03', n: '03', title: 'Согласие на обработку ПДн', meta: 'Форма при регистрации заказчика', href: 'legal-pdf/03-pd-consent.pdf' },
-  { id: '04', n: '04', title: 'Cookies / localStorage', meta: 'Техническое уведомление', href: 'legal-pdf/04-cookie-notice.pdf' },
-  { id: '05', n: '05', title: 'Комиссия биржи', meta: 'Дополнение к оферте', href: 'legal-pdf/05-exchange-agency.pdf' },
-  { id: '06', n: '06', title: 'Соглашение о пилоте', meta: 'Шаблон для партнёра-перевозчика', href: 'legal-pdf/06-pilot-agreement.pdf' },
-  { id: '07', n: '07', title: 'Поручение на обработку ПДн', meta: 'SaaS / 152-ФЗ', href: 'legal-pdf/07-pd-processing-order.pdf' },
-  { id: 'kp', n: 'КП', title: 'Коммерческое предложение', meta: 'Не юридический договор · для рассылки', href: 'legal-pdf/ARMADA_Commercial_Proposal.pdf' }
+  { id: 'transport', n: 'Т', title: 'Заявка на транспорт (order.html)', meta: 'Условия и ПДн для клиента перевозки · не SaaS', href: 'legal-transport.html', htmlOnly: true },
+  { id: 'full', n: '📦', title: 'Полный юридический пакет', meta: 'Все 7 документов одним PDF', href: 'legal-pdf/ARMADA_Legal_Package_Full.pdf', pdfSoon: true },
+  { id: '01', n: '01', title: 'Публичная оферта SaaS', meta: 'Главный договор с клиентом сервиса', href: 'legal-pdf/01-public-offer.pdf', htmlHref: 'legal.html#offer', pdfSoon: true },
+  { id: '02', n: '02', title: 'Политика конфиденциальности (152-ФЗ)', meta: 'Для сайта и портала заказчика', href: 'legal-pdf/02-privacy-policy.pdf', htmlHref: 'legal.html#privacy', pdfSoon: true },
+  { id: '03', n: '03', title: 'Согласие на обработку ПДн', meta: 'Форма при регистрации заказчика', href: 'legal-pdf/03-pd-consent.pdf', pdfSoon: true },
+  { id: '04', n: '04', title: 'Cookies / localStorage', meta: 'Техническое уведомление', href: 'legal-pdf/04-cookie-notice.pdf', pdfSoon: true },
+  { id: '05', n: '05', title: 'Комиссия биржи', meta: 'Дополнение к оферте', href: 'legal-pdf/05-exchange-agency.pdf', pdfSoon: true },
+  { id: '06', n: '06', title: 'Соглашение о пилоте', meta: 'Шаблон для партнёра-перевозчика', href: 'legal-pdf/06-pilot-agreement.pdf', pdfSoon: true },
+  { id: '07', n: '07', title: 'Поручение на обработку ПДн', meta: 'SaaS / 152-ФЗ', href: 'legal-pdf/07-pd-processing-order.pdf', pdfSoon: true },
+  { id: 'kp', n: 'КП', title: 'Коммерческое предложение', meta: 'Не юридический договор · для рассылки', href: 'legal-pdf/ARMADA_Commercial_Proposal.pdf', pdfSoon: true }
 ];
 
 function adminDocsSpaceId() {
@@ -56,7 +59,17 @@ function openAdminLetterBlank() {
 }
 
 function adminDocsLegalPanelHtml() {
-  const cards = ADMIN_LEGAL_DOCS.map(d => `
+  const cards = ADMIN_LEGAL_DOCS.map(d => {
+    const pdfHidden=d.htmlOnly||(ADMIN_LEGAL_PDF_SOON&&d.pdfSoon);
+    const pdfBtn=pdfHidden
+      ?(d.pdfSoon&&!d.htmlOnly?`<span class="hint adm-doc-pdf-soon" title="${esc(d.href)}">PDF · скоро</span>`:'')
+      :`<a class="secondary" href="${esc(d.href)}" target="_blank" rel="noopener">PDF</a>`;
+    const webHref=d.htmlHref||d.href;
+    const webLbl=d.htmlOnly?'Открыть':(d.htmlHref?'На сайте':'Открыть');
+    const webBtn=(d.htmlHref||d.htmlOnly||!d.pdfSoon)
+      ?`<a class="secondary" href="${esc(webHref)}" target="_blank" rel="noopener">${webLbl}</a>`
+      :'';
+    return `
     <div class="adm-doc-card">
       <div>
         <span class="adm-doc-badge">${esc(d.n)}</span>
@@ -64,11 +77,13 @@ function adminDocsLegalPanelHtml() {
         <p class="meta">${esc(d.meta)}</p>
       </div>
       <div class="adm-doc-actions">
-        <a class="secondary" href="${esc(d.href)}" target="_blank" rel="noopener">PDF</a>
+        ${pdfBtn}
+        ${webBtn}
       </div>
-    </div>`).join('');
-  return `<p class="cat-panel-hint">Юридические документы SaaS (оферта, ПДн). Бухгалтерские документы по заявкам — вкладка «Бух.доки».</p>
-    <p class="hint"><a href="legal.html" target="_blank" rel="noopener">legal.html</a> — страница для сайта и заказчиков.</p>
+    </div>`;
+  }).join('');
+  return `<p class="cat-panel-hint">SaaS — оферта и ПДн платформы. Заявка на <strong>перевозку</strong> — <a href="legal-transport.html" target="_blank" rel="noopener">legal-transport.html</a> (отдельно от SaaS). PDF из каталога <code>legal-pdf/</code> появятся после юриста — кнопки «PDF · скоро».</p>
+    <p class="hint"><a href="legal.html" target="_blank" rel="noopener">legal.html</a> · <a href="legal-transport.html" target="_blank" rel="noopener">legal-transport.html</a></p>
     ${cards}`;
 }
 
@@ -233,7 +248,7 @@ function adminDocsLettersPanelHtml() {
       <div class="adm-doc-actions"><button type="button" class="primary" id="adm-letter-blank">Открыть</button></div>
     </div>
     <h3 class="adm-docs-subtitle">Письма оператору подписи (КЭП / ПЭП)</h3>
-    <p class="cat-panel-hint">Подключение подписи для ЭТrН — заказчик (T1), перевозчик (T2), водитель (T3/T4).</p>
+    <p class="cat-panel-hint">Подключение подписи для ЭТрН — грузоотправитель (T1), перевозчик (T2/T4), грузополучатель (T3), водитель ПЭП (T2/T4).</p>
     ${signOps || '<div class="empty">Нет шаблонов</div>'}
     ${konturBlock}`;
 }
@@ -310,7 +325,7 @@ function adminDocsConstructorPanelHtml() {
     ? isKonturOp
       ? '<p class="cat-panel-hint">Письмо платформы ООО «АРМАДА» оператору ЭТрН. Исходящий номер и дата присваиваются при первой печати. Сохранение синхронизируется на сервер.</p>'
       : isSignOp
-        ? '<p class="cat-panel-hint">Письмо на бланке вашей компании для подключения подписи ЭТrН (T1/T2/T3/T4). Печать — с фирменным логотипом из «Тарифы» → портал заказчика.</p>'
+        ? '<p class="cat-panel-hint">Письмо на бланке вашей компании для подключения подписи ЭТрН (T1/T2/T3/T4). Печать — с фирменным логотипом из «Тарифы» → портал заказчика.</p>'
         : `<p class="cat-panel-hint">Шаблоны фирмы «${esc(sp && sp.name || sid)}». После сохранения подстановка полей используется при печати документов.</p>`
     : isKonturOp
       ? '<p class="hint">Просмотр письма оператору. Редактировать может только супер-админ.</p>'

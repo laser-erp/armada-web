@@ -10,7 +10,7 @@
 
 1. Карточка «Оформить КЭП/ПЭП» в профиле роли.
 2. Кнопка → **полноэкранное окно оператора внутри приложения** (`#epd-operator-shell` + iframe).
-3. Подпись титула ЭТrН → то же окно (`openEpdTitulSign`).
+3. Подпись титула ЭТрН → то же окно (`openEpdTitulSign`).
 4. Статус профиля — в `state.epdSignProfiles`, синхронизация через API/webhook.
 
 Криптография и юридическая сила — **у оператора**. АРМАДА — оболочка и учёт статуса.
@@ -34,7 +34,7 @@
 | Функция | Назначение |
 |---------|------------|
 | `openEpdSignUp(role)` | Оформление подписи → iframe оператора |
-| `openEpdTitulSign(orderId, titul, role)` | Подпись титула ЭТrН in-app |
+| `openEpdTitulSign(orderId, titul, role)` | Подпись титула ЭТрН in-app |
 | `openEpdOperatorShell(url)` | Общая оболочка |
 | `syncEpdSignProfileFromApi` | Опрос `/epd/sign-status` |
 

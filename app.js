@@ -222,11 +222,16 @@ function docPhotoThumbHtml(src, label){
   const cap=label?esc(label):'Документ';
   return `<button type="button" class="doc-photo-thumb" data-doc-photo-view="1" title="${cap}" aria-label="${cap}"><img src="${esc(src)}" alt="${cap}" loading="lazy" /></button>`;
 }
+function filePickInputHtml(attrs){
+  const a=attrs||'';
+  const accept=a.includes('accept=')?'':` accept="image/png,image/jpeg,image/webp"`;
+  return `<label class="file-pick-btn"><span class="file-pick-btn__label">Выбрать файл</span><input type="file" class="file-pick-btn__input"${accept} ${a} /></label>`;
+}
 function docPhotoUploadRow(label, existing, inputAttrs, clearAttrs){
   return `<label class="doc-photo-row"><span>${esc(label)}</span>
     <div class="doc-photo-row__box">
       ${docPhotoThumbHtml(existing, label)}
-      <input type="file" accept="image/png,image/jpeg,image/webp" ${inputAttrs||''} />
+      ${filePickInputHtml(inputAttrs||'')}
       ${existing?`<button type="button" class="secondary doc-photo-clear" ${clearAttrs||''} title="Удалить">×</button>`:''}
     </div>
   </label>`;
@@ -572,24 +577,34 @@ function suggestCustomerOrderPrice(draft){
   const fin=financeForCompanyId(draft.ownCompanyId);
   const km=+(draft.routeKm||draft.estimateKm||0);
   const trip=draft.tripMode||inferTripMode(km, fin);
-  const mult=quoteBodyCargoMultiplier(draft, fin);
-  const perKm=(+fin.defaultRatePerKmCash)||80;
-  const perHour=(+fin.defaultRatePerHourWork)||0;
+  const tariffPick=typeof findTariffRuleForOrder==='function'?findTariffRuleForOrder(draft, fin):null;
+  if(tariffPick&&tariffPick.missingRate){
+    return {
+      minimumCash:0,
+      cash:0,
+      withoutVat:0,
+      withVat:0,
+      summary:'Стоимость уточняется',
+      tariffMissing:true,
+      tripMode:trip,
+      routeKm:km||null
+    };
+  }
+  const typeFin=typeof financeForOrderType==='function'?financeForOrderType(draft, fin):fin;
+  const mult=(tariffPick&&tariffPick.ruleId)?1:quoteBodyCargoMultiplier(draft, fin);
+  const perKm=(+typeFin.defaultRatePerKmCash)||80;
+  const kmRate=(trip==='intercity' && +typeFin.ratePerKmOutsideKad>0)?+typeFin.ratePerKmOutsideKad:perKm;
   let base=null;
-  let summary='';
-  if(trip==='intercity'){
-    if(!(km>0) || !(perKm>0)) return null;
-    const kmCash=round2(km*perKm);
-    const hourFloor=perHour>0?round2(((+fin.minWorkHours||0)+(+fin.podachaHours||0))*perHour):0;
-    const raw=Math.max(kmCash, hourFloor);
-    base={totalCash:raw, summary:`межгород ${km} км × ${fmt(perKm)} ₽/км`+(hourFloor>kmCash?` (не ниже пакета часов)`:``)};
-  } else {
-    const cityDraft=Object.assign({}, draft, {
-      estimateKm:km>0?km:null,
-      emptyKmBefore:0,
-      estimateWorkHours:draft.estimateWorkHours||fin.minWorkHours||4
-    });
-    base=calculateClientTariff(cityDraft, fin);
+  const cityDraft=Object.assign({}, draft, {
+    tripMode:trip==='intercity'?'intercity':'city',
+    estimateKm:km>0?km:null,
+    emptyKmBefore:draft.emptyKmBefore||0,
+    estimateWorkHours:draft.estimateWorkHours||typeFin.minWorkHours||4
+  });
+  base=calculateClientTariff(cityDraft, typeFin);
+  if(!base && trip==='intercity' && km>0 && kmRate>0){
+    const kmCash=round2(km*kmRate);
+    base={totalCash:kmCash, summary:`межгород ${km} км × ${fmt(kmRate)} ₽/км`};
   }
   if(!base||!(base.totalCash>0)) return null;
   let total=round2(base.totalCash*mult);
@@ -747,7 +762,7 @@ function updateCreatePricePreview(){
   const bits=[];
   if(draft.tripMode) bits.push(tripModeLabel(draft.tripMode));
   if(draft.routeKm) bits.push(`≈ ${draft.routeKm} км`);
-  if(draft.reqPayloadTons) bits.push(draft.reqPayloadTons+' т');
+  if(draft.reqPayloadTons) bits.push(formatCargoWeightTonsRu(draft.reqPayloadTons));
   const s=suggestDispatcherOrderPrice(draft);
   if(!s){
     box.innerHTML=`
@@ -1373,10 +1388,11 @@ function orderReqText(o){
   if(!o) return '';
   const bits=[];
   if(o.tripMode) bits.push(tripModeLabel(o.tripMode));
-  if(o.reqBodyType) bits.push(bodyTypeLabel(o.reqBodyType)||o.reqBodyType);
-  if(Array.isArray(o.vehicleTypeIds)&&o.vehicleTypeIds.length){
-    bits.push(o.vehicleTypeIds.map(id=>typeof custVehicleTypeLabel==='function'?custVehicleTypeLabel(id):id).join(', '));
-  }
+  const vtLabels=Array.isArray(o.vehicleTypeIds)&&o.vehicleTypeIds.length
+    ?o.vehicleTypeIds.map(id=>typeof custVehicleTypeLabel==='function'?custVehicleTypeLabel(id):id).filter(Boolean)
+    :[];
+  if(vtLabels.length) bits.push(vtLabels.join(', '));
+  else if(o.reqBodyType) bits.push(bodyTypeLabel(o.reqBodyType)||o.reqBodyType);
   if(Array.isArray(o.loadingMethods)&&o.loadingMethods.length){
     bits.push('загр.: '+o.loadingMethods.map(id=>typeof custLoadMethodLabel==='function'?custLoadMethodLabel(id):id).join(', '));
   }
@@ -1391,7 +1407,10 @@ function orderReqText(o){
   if(o.cargoFragile) bits.push('хрупкий');
   const tempBit=orderTempRangeText(o);
   if(tempBit) bits.push(tempBit);
-  if(o.reqPayloadTons>0) bits.push('от '+o.reqPayloadTons+'т');
+  const mass=typeof formatOrderCargoMassDisplay==='function'?formatOrderCargoMassDisplay(o):'';
+  if(mass) bits.push(mass);
+  const payloadMin=typeof formatOrderVehiclePayloadMinDisplay==='function'?formatOrderVehiclePayloadMinDisplay(o):'';
+  if(payloadMin) bits.push(payloadMin);
   if(o.routeKm>0) bits.push('~'+o.routeKm+' км');
   if([o.reqLengthM,o.reqWidthM,o.reqHeightM].every(x=>x>0))
     bits.push(`кузов ≥ ${o.reqLengthM}×${o.reqWidthM}×${o.reqHeightM}м`);
@@ -1405,18 +1424,16 @@ function orderReqText(o){
 /** ТС подходит, если каждое указанное требование закрыто его характеристикой. */
 function vehicleFitsOrder(v, o){
   if(!v || !o) return false;
+  if(typeof vehicleMissingAssignBlockParams==='function' && vehicleMissingAssignBlockParams(v).length) return false;
   if(typeof vehicleBodyTypeMatchesOrder==='function' && !vehicleBodyTypeMatchesOrder(v, o)) return false;
   const pairs=[['reqPayloadTons','payloadTons'],['reqLengthM','bodyLengthM'],['reqWidthM','bodyWidthM'],['reqHeightM','bodyHeightM']];
-  let anyReq=false;
   for(const [req,field] of pairs){
     const need=+o[req];
     if(!(need>0)) continue;
-    anyReq=true;
     const have=+v[field];
     if(!(have>0)) continue;
     if(have+1e-9<need) return false;
   }
-  if(!anyReq) return true;
   return true;
 }
 function readOrderRequirementsFromCreate(){
@@ -1602,7 +1619,8 @@ function vehicleBusyAt(plate, atIso, exceptOrderId){
 }
 function availableFleetForCustomer(companyId, reqs, atIso){
   return fleetVehiclesForCompany(companyId).filter(v=>{
-    if(reqs && (reqs.reqPayloadTons>0 || reqs.reqLengthM>0) && !vehicleFitsOrder(v, reqs)) return false;
+    if(typeof vehicleMissingAssignBlockParams==='function' && vehicleMissingAssignBlockParams(v).length) return false;
+    if(reqs && typeof orderHasVehicleRequirements==='function' && orderHasVehicleRequirements(reqs) && !vehicleFitsOrder(v, reqs)) return false;
     return !vehicleBusyAt(v.plate, atIso);
   });
 }
@@ -1889,6 +1907,14 @@ function fromRuDateTimeParts(dateStr, timeStr){
   d.setHours(h, mi, 0, 0);
   return d.toISOString();
 }
+function validateVehicleAtNotPast(iso, slackMs){
+  slackMs=slackMs==null?60000:Math.max(0,+slackMs||0);
+  if(!iso) return {ok:false, msg:'Укажите дату и время подачи ТС'};
+  const t=Date.parse(iso);
+  if(Number.isNaN(t)) return {ok:false, msg:'Некорректные дата или время подачи'};
+  if(t<Date.now()-slackMs) return {ok:false, msg:'Дата и время подачи не могут быть в прошлом'};
+  return {ok:true, at:iso};
+}
 function readVehicleAtFromDom(prefix){
   const dateEl=$(`${prefix}-vehicle-date`);
   const timeEl=$(`${prefix}-vehicle-time`);
@@ -2146,10 +2172,269 @@ function dayOnly(d){
   if(!d) return '';
   return new Date(d).toLocaleDateString('ru-RU',{day:'2-digit',month:'2-digit',year:'numeric'});
 }
-/** Подпись номера за смену: «за день-3», не «день 3». */
-function orderDayLabel(n){ return `за день-${n}`; }
+/** Порядковый день многодневной перевозки в смене (1 — без подписи в UI). */
+function orderDayLabel(n){
+  const d=+(n??0);
+  if(!Number.isFinite(d)||d<2) return '';
+  return `${d}-й день работы`;
+}
+function orderDayLabelSuffix(n){
+  const lbl=orderDayLabel(n);
+  return lbl?` · ${lbl}`:'';
+}
+function orderDayLabelParen(n){
+  const lbl=orderDayLabel(n);
+  return lbl?` (${lbl})`:'';
+}
+/** Только отображение: устаревшие «за день-N» / «(за день-N)» → orderDayLabelSuffix (день 1 — убрать). БД не меняет. */
+function normalizeLegacyOrderDayInText(t){
+  let s=String(t??'');
+  const suffixFor=raw=>{
+    const d=+raw;
+    if(!Number.isFinite(d)||d<2) return '';
+    return orderDayLabelSuffix(d);
+  };
+  s=s.replace(/\s*\(\s*за\s+день\s*[-–—]?\s*(\d+)\s*\)/gi,(_,raw)=>suffixFor(raw));
+  s=s.replace(/\s*[·•]\s*за\s+день\s*[-–—]?\s*(\d+)\b/gi,(_,raw)=>suffixFor(raw));
+  s=s.replace(/\(\s*(\d+)\s*[-–—]\s*й\s+день\s+работы\s*\)/gi,(_,raw)=>suffixFor(raw));
+  s=s.replace(/\((\d+)-й день работы\)/gi,(_,raw)=>suffixFor(raw));
+  s=s.replace(/ {2,}/g,' ');
+  return s.trimEnd();
+}
 function esc(s){ return String(s??'').replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;').replaceAll('"','&quot;').replaceAll("'",'&#39;'); }
-function add(a,t){ state.messages.push({author:a,text:t,at:new Date().toISOString()}); renderChat(); }
+function armadaConfirmEnsureOverlay(){
+  let el=$('armada-confirm-overlay');
+  if(el) return el;
+  document.body.insertAdjacentHTML('beforeend', `<div id="armada-confirm-overlay" class="armada-confirm-overlay" hidden>
+    <div class="armada-confirm-panel" role="dialog" aria-modal="true" aria-labelledby="armada-confirm-title">
+      <h2 class="armada-confirm-title" id="armada-confirm-title"></h2>
+      <p class="armada-confirm-message" id="armada-confirm-message"></p>
+      <div class="armada-confirm-actions">
+        <button type="button" class="secondary" id="armada-confirm-cancel">Отмена</button>
+        <button type="button" class="primary" id="armada-confirm-ok">Выйти</button>
+      </div>
+    </div>
+  </div>`);
+  return $('armada-confirm-overlay');
+}
+/** Русский модальный confirm вместо window.confirm (мобильный en-US OK/Cancel). */
+function armadaConfirm(opts){
+  opts=opts||{};
+  const title=String(opts.title||'').trim();
+  const message=String(opts.message||opts.text||'').trim();
+  const okLabel=String(opts.okLabel||opts.confirmLabel||'Выйти').trim();
+  const cancelLabel=String(opts.cancelLabel||'Отмена').trim();
+  const overlay=armadaConfirmEnsureOverlay();
+  const titleEl=$('armada-confirm-title');
+  const msgEl=$('armada-confirm-message');
+  const okBtn=$('armada-confirm-ok');
+  const cancelBtn=$('armada-confirm-cancel');
+  if(titleEl) titleEl.textContent=title||'Подтверждение';
+  if(titleEl) titleEl.hidden=!title;
+  if(msgEl) msgEl.textContent=message;
+  if(okBtn) okBtn.textContent=okLabel;
+  if(cancelBtn) cancelBtn.textContent=cancelLabel;
+  overlay.hidden=false;
+  document.body.classList.add('armada-confirm-open');
+  return new Promise(resolve=>{
+    const done=v=>{ overlay.hidden=true; document.body.classList.remove('armada-confirm-open'); resolve(!!v); };
+    const onOk=()=>{ cleanup(); done(true); };
+    const onCancel=()=>{ cleanup(); done(false); };
+    const onKey=e=>{ if(e.key==='Escape'){ e.preventDefault(); onCancel(); } };
+    function cleanup(){
+      if(okBtn) okBtn.onclick=null;
+      if(cancelBtn) cancelBtn.onclick=null;
+      overlay.onclick=null;
+      document.removeEventListener('keydown', onKey);
+    }
+    if(okBtn) okBtn.onclick=onOk;
+    if(cancelBtn) cancelBtn.onclick=onCancel;
+    overlay.onclick=e=>{ if(e.target===overlay) onCancel(); };
+    document.addEventListener('keydown', onKey);
+    setTimeout(()=>{ try{ okBtn&&okBtn.focus(); }catch(_){} }, 0);
+  });
+}
+function armadaApplyMobileEnterKeyHints(root){
+  root=root||document;
+  if(!root.querySelectorAll) return;
+  root.querySelectorAll('input, textarea').forEach(el=>{
+    if(!el||el.hidden) return;
+    const type=String(el.getAttribute('type')||'text').toLowerCase();
+    if(type==='hidden'||type==='checkbox'||type==='radio'||type==='file'||type==='button'||type==='submit') return;
+    if(el.id==='cust-chat-input'){
+      el.setAttribute('enterkeyhint','enter');
+      el.setAttribute('lang','ru');
+      return;
+    }
+    if(el.hasAttribute('enterkeyhint')) return;
+    if(el.closest('#input-bar')||el.id==='text'){
+      el.setAttribute('enterkeyhint','enter');
+      return;
+    }
+    if(type==='tel'||type==='email'||el.inputMode==='tel'||el.inputMode==='email') el.setAttribute('enterkeyhint','next');
+    else el.setAttribute('enterkeyhint','done');
+  });
+}
+/** Сетевые/серверные тексты ошибок → русский (чат, формы, баннеры). */
+function armadaUserFacingError(msg){
+  const s=String(msg??'').trim();
+  if(!s) return '';
+  const low=s.toLowerCase();
+  if(/failed to fetch|networkerror|load failed|network request failed|err_internet_disconnected|err_network|the internet connection appears to be offline|fetch failed|connection refused|econnrefused|enetunreach/.test(low))
+    return 'Нет связи с сервером';
+  if(/something went wrong|unexpected error|unknown error/.test(low))
+    return 'Что-то пошло не так — попробуйте ещё раз';
+  if(/aborted|timeout|timed out|signal is aborted|deadline exceeded/.test(low))
+    return 'Превышено время ожидания — проверьте интернет';
+  if(/^http \d{3}$/i.test(s)) return `Ошибка сервера (${s.toUpperCase()})`;
+  if(/^api state \d+/i.test(s)) return 'Не удалось связаться с сервером';
+  if(/^api patch \d+/i.test(s)) return 'Не удалось сохранить на сервере';
+  if(/pocketbase|pb auth|collection.*not found/i.test(low)) return 'Сервис данных временно недоступен';
+  if(low==='unauthorized'||low==='unauthorised') return 'Нужно войти снова';
+  if(low==='forbidden'||low==='permission denied') return 'Недостаточно прав';
+  if(low==='not found'||low==='not_found'||/^order not found$/i.test(s)) return 'Не найдено';
+  if(low==='invalid_credentials'||low==='invalid credentials') return 'Неверный телефон или PIN';
+  if(low==='rate_limited'||low==='rate limited') return 'Слишком много попыток — подождите минуту';
+  if(low==='bad_payload'||low==='bad payload') return 'Неверные данные для сервера';
+  if(low==='remote_ahead'||low==='remote ahead') return 'На сервере уже более новая версия — обновите страницу';
+  if(low==='auth_failed'||low==='auth failed') return 'Не удалось войти — попробуйте позже';
+  if(low==='read_failed') return 'Не удалось загрузить данные с сервера';
+  if(low==='write_failed') return 'Не удалось сохранить на сервере';
+  if(low==='no_space') return 'Нет доступа к вашей организации';
+  if(low==='bootstrap_failed') return 'Сервер ещё не готов — попробуйте позже';
+  if(/^bad request$/i.test(s)) return 'Неверный запрос';
+  if(/^internal server error$/i.test(s)) return 'Ошибка сервера';
+  if(/too many requests|rate limit/.test(low)) return 'Слишком много запросов — подождите и повторите';
+  if(/validation failed|invalid input/.test(low)) return 'Данные не прошли проверку на сервере';
+  if(/chat not found/i.test(s)) return 'Канал MAX не найден — проверьте chat_id';
+  if(/token и chat_id|token and chat_id/i.test(s)) return 'На сервере не заданы токен или chat_id MAX';
+  if(/externalid required|external id required/i.test(low)) return 'Ошибка ЭТрН — обратитесь к диспетчеру';
+  if(typeof armadaLocalizeChatVisibleText==='function'){
+    const loc=armadaLocalizeChatVisibleText(s);
+    if(loc && loc!==s) return loc;
+  }
+  if(/[a-z]/i.test(s) && !/[а-яё]/i.test(s))
+    return 'Не удалось выполнить действие — проверьте интернет и обновите страницу';
+  return s;
+}
+/** Коды статусов/ролей/типов из API — не показывать сырьём в чате (фолбэк без кода). */
+const ARMADA_CHAT_CODE_RU=Object.freeze({
+  inbox:'Входящие', assigned:'Назначен', in_progress:'В работе', en_route:'В пути', en_route_to_load:'В пути на погрузку',
+  en_route_to_unload:'В работе', at_load:'На погрузке', at_unload:'На выгрузке',
+  closed:'Закрыт', cancelled:'Отменён', canceled:'Отменён', done:'Завершён', progress:'В работе',
+  active:'Активен', inactive:'Не активен', open:'Открыт',
+  exchange:'Биржа', direct:'Свой парк', own:'Парк', partner:'Партнёр', logist:'Логист',
+  requested:'Запрошена', confirmed:'Подтверждена', rejected:'Отклонена',
+  draft:'Черновик', scheduled:'Запланировано', published:'Опубликовано', failed:'Ошибка',
+  driver:'Водитель', customer:'Заказчик', admin:'Логист', system:'Система', bot:'Ассистент',
+  load:'Загрузка', unload:'Выгрузка', parking:'Стоянка', departure:'Выезд', arrival:'Прибытие',
+  invoice:'Счёт', framework:'Договор', application:'Заявка', transportapp:'Транспортная накладная',
+  transport_app:'Транспортная накладная', etrn:'ЭТрН', papertn:'Бумажная ТН', paper_tn:'Бумажная ТН',
+  act:'Акт', paper:'Бумажная ТН', sending:'Отправка', sent:'Отправлено', delivered:'Доставлено',
+  read:'Прочитано', typing:'Печатает…', retry:'Повторить', fulfillment_direct:'Свой парк',
+  online:'На связи', offline:'Нет связи', loading:'Загрузка…', cancel:'Отмена', error:'Ошибка',
+  upload:'Загрузка файла', ok:'Готово', pdf:'PDF', message:'Сообщение', event:'Событие', notification:'Уведомление',
+  push:'Уведомление', webhook:'Событие сервера', kind:'Тип', role:'Роль', signed:'Подписано',
+  pending:'Ожидание', processing:'Обработка…', complete:'Готово', completed:'Завершено'
+});
+function armadaChatCodeLabel(code){
+  const raw=String(code??'').trim();
+  if(!raw) return '';
+  if(/[а-яё]/i.test(raw)) return raw;
+  const key=raw.toLowerCase().replace(/[\s-]+/g,'_');
+  if(ARMADA_CHAT_CODE_RU[key]) return ARMADA_CHAT_CODE_RU[key];
+  if(ARMADA_CHAT_CODE_RU[raw.toLowerCase()]) return ARMADA_CHAT_CODE_RU[raw.toLowerCase()];
+  if(/^[a-z][a-z0-9_.-]{0,48}$/i.test(raw)) return 'Служебное сообщение';
+  return raw;
+}
+function armadaLocalizeIsoDatesInText(s){
+  return String(s).replace(/\b(\d{4}-\d{2}-\d{2}[T\s]\d{2}:\d{2}(?::\d{2})?(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})?)\b/g,(iso)=>{
+    const d=new Date(iso.replace(' ','T'));
+    if(Number.isNaN(d.getTime())) return iso;
+    return d.toLocaleString('ru-RU',{day:'2-digit',month:'2-digit',year:'numeric',hour:'2-digit',minute:'2-digit'});
+  });
+}
+const ARMADA_CHAT_CODE_TOKEN_RX=/\b(inbox|assigned|in_progress|en_route_to_load|en_route_to_unload|en_route|at_load|at_unload|cancelled|canceled|closed|done|progress|exchange|direct|partner|own|logist|requested|confirmed|rejected|unauthorized|forbidden|not_found|failed|draft|scheduled|published|sending|sent|delivered|typing|retry|driver|customer|admin|system|paper_tn|paperTn|transport_app|transportApp|fulfillment_direct|online|offline|loading|cancel|error|upload|ok|pending|processing|completed|complete|signed|webhook|push|notification|message|event|kind|role|active|inactive|open)\b/gi;
+function armadaLocalizeEnAmPmDatesInText(s){
+  return String(s).replace(/\b(\d{1,2})\/(\d{1,2})\/(\d{2,4}),?\s+(\d{1,2}):(\d{2})\s*(AM|PM)\b/gi,(full,mo,da,y,rh,rm,ap)=>{
+    let y4=+y; if(y4<100) y4+=2000;
+    let h=+rh%12; if(/^p/i.test(ap)) h+=12;
+    const d=new Date(y4,+mo-1,+da,h,+rm,0);
+    if(Number.isNaN(d.getTime())) return full;
+    return d.toLocaleString('ru-RU',{day:'2-digit',month:'2-digit',year:'numeric',hour:'2-digit',minute:'2-digit'});
+  });
+}
+const ARMADA_CHAT_UI_WORD_RX=/\b(online|offline|loading|cancel|error|upload|retry|sent|read|ok|pdf)\b/gi;
+function armadaLocalizeChatUiWords(s){
+  return String(s).replace(ARMADA_CHAT_UI_WORD_RX,(m)=>armadaChatCodeLabel(m));
+}
+function armadaReplaceChatCodesInText(s){
+  let out=String(s);
+  out=out.replace(/(?:status|статус|state|состояние|step|шаг)\s*[:=]\s*([a-z][a-z0-9_.-]*)/gi,(_,c)=>`Статус: ${armadaChatCodeLabel(c)}`);
+  out=out.replace(/(?:kind|type|тип|вид|role|роль|author|автор)\s*[:=]\s*([a-z][a-z0-9_.-]*)/gi,(_,c)=>armadaChatCodeLabel(c));
+  out=out.replace(/(?:fulfillment|executor(?:Type)?|исполнение)\s*[:=]\s*([a-z][a-z0-9_.-]*)/gi,(_,c)=>armadaChatCodeLabel(c));
+  out=out.replace(/(?:event|событие|message|сообщение)\s*[:=]\s*([a-z][a-z0-9_.-]*)/gi,(_,c)=>armadaChatCodeLabel(c));
+  out=out.replace(ARMADA_CHAT_CODE_TOKEN_RX,(m)=>armadaChatCodeLabel(m));
+  return out;
+}
+/** Русские подсказки вместо системных сообщений HTML5 (required/pattern). */
+function armadaRuFieldValidity(el, msg){
+  if(!el||el.dataset.ruValidityWired) return;
+  el.dataset.ruValidityWired='1';
+  const m=msg||'Заполните поле';
+  el.addEventListener('invalid',()=>{ el.setCustomValidity(m); });
+  el.addEventListener('input',()=>{ el.setCustomValidity(''); });
+}
+/** Известные серверные фразы в тексте сообщений чата (armada-api — править и на сервере). */
+const ARMADA_CHAT_SERVER_PHRASES=[
+  [/\bOrder assigned\b/gi, 'Заказ назначен'],
+  [/\bDriver assigned\b/gi, 'Назначен водитель'],
+  [/\bVehicle assigned\b/gi, 'Назначено ТС'],
+  [/\bStatus changed to\b/gi, 'Статус изменён на'],
+  [/\bMessage sent\b/gi, 'Сообщение отправлено'],
+  [/\bNo messages yet\b/gi, 'Сообщений пока нет'],
+  [/\bTyping\.{0,3}\b/gi, 'Печатает…'],
+  [/\bFailed to send\b/gi, 'Не удалось отправить'],
+  [/\bFailed to fetch\b/gi, 'Нет связи с сервером'],
+  [/\bInternal Server Error\b/gi, 'Ошибка сервера'],
+  [/\bBad Request\b/gi, 'Неверный запрос'],
+  [/\bNot Found\b/gi, 'Не найдено'],
+  [/\bPermission denied\b/gi, 'Нет доступа'],
+  [/\bToday\b/g, 'Сегодня'],
+  [/\bYesterday\b/g, 'Вчера'],
+  [/\bSomething went wrong\b/gi, 'Что-то пошло не так'],
+  [/\bPlease try again\b/gi, 'Попробуйте ещё раз'],
+  [/\bOrder not found\b/gi, 'Заказ не найден'],
+  [/\bInvalid credentials\b/gi, 'Неверный логин или пароль'],
+  [/\bSession expired\b/gi, 'Сессия истекла — войдите снова'],
+  [/\bGateway Timeout\b/gi, 'Сервер не ответил вовремя'],
+  [/\bService Unavailable\b/gi, 'Сервис временно недоступен'],
+];
+function armadaLocalizeChatVisibleText(text){
+  let s=String(text??'');
+  if(!s) return s;
+  if(typeof normalizeLegacyOrderDayInText==='function') s=normalizeLegacyOrderDayInText(s);
+  const trimmed=s.trim();
+  if(/^(failed to fetch|networkerror|unauthorized|forbidden|not found|internal server error|bad request)$/i.test(trimmed))
+    return armadaUserFacingError(trimmed);
+  if(/^[a-z][a-z0-9_.-]{0,40}$/i.test(trimmed) && !/[а-яё]/i.test(trimmed))
+    return armadaChatCodeLabel(trimmed);
+  s=armadaLocalizeIsoDatesInText(s);
+  s=armadaLocalizeEnAmPmDatesInText(s);
+  s=armadaReplaceChatCodesInText(s);
+  s=armadaLocalizeChatUiWords(s);
+  ARMADA_CHAT_SERVER_PHRASES.forEach(([rx, ru])=>{ s=s.replace(rx, ru); });
+  return s;
+}
+function armadaLocalizeChatHtml(html){
+  return armadaLocalizeChatVisibleText(String(html??''));
+}
+function add(a,t){
+  const raw=String(t??'');
+  const text=typeof armadaLocalizeChatVisibleText==='function'?armadaLocalizeChatVisibleText(raw):raw;
+  state.messages.push({author:a,text,at:new Date().toISOString()});
+  renderChat();
+}
 function plates(){
   // Авто фирмы активного водителя
   const coId=DRIVER_COMPANY_ID || resolveDriverOrderBinding(DRIVER,'').ownCompanyId;
@@ -2395,6 +2680,94 @@ function fallbackOdometerForPlate(plate, companyId){
   if(v && v.currentOdometer!=null && +v.currentOdometer>=0) return +v.currentOdometer;
   return lastKnownOdometerForPlate(plate, companyId);
 }
+/** Нижняя граница одометра ЕТО: прошлая смена, карточка авто, подсказки смены. */
+function driverEtoOdometerMin(shift){
+  if(!shift) return null;
+  const plate=shift.vehiclePlate;
+  const cid=shift.ownCompanyId||null;
+  const driver=shift.driverName||(typeof DRIVER!=='undefined'?DRIVER:null);
+  const parts=[];
+  if(shift.etoOdometerSuggest!=null && +shift.etoOdometerSuggest>=0) parts.push(+shift.etoOdometerSuggest);
+  if(shift.lastOdometerPoint!=null && +shift.lastOdometerPoint>=0) parts.push(+shift.lastOdometerPoint);
+  if(driver && plate){
+    const ps=previousShiftOdometerForPlate(plate, cid, driver);
+    if(ps!=null) parts.push(+ps);
+  }
+  const fb=fallbackOdometerForPlate(plate, cid);
+  if(fb!=null) parts.push(+fb);
+  return parts.length?Math.max(...parts):null;
+}
+/** Км за смену: одометр ЕТО → последняя отметка; >2000 км — не доверяем (ошибка ЕТО). */
+const DRIVER_DAY_KM_MAX=2000;
+function driverShiftDayKm(shift){
+  if(!shift||shift.odometer==null) return null;
+  const end=shift.parkingOdometer!=null?+shift.parkingOdometer:(shift.lastOdometerPoint!=null?+shift.lastOdometerPoint:null);
+  if(end==null||!(end>=0)) return null;
+  const km=Math.max(0, end-+shift.odometer);
+  if(km>DRIVER_DAY_KM_MAX) return null;
+  return Math.round(km);
+}
+/** Смена: разница ЕТО→последняя отметка явно нереалистична (ошибка ЕТО). */
+function driverShiftKmImplausible(shift){
+  if(!shift||shift.odometer==null) return false;
+  const end=shift.parkingOdometer!=null?+shift.parkingOdometer:(shift.lastOdometerPoint!=null?+shift.lastOdometerPoint:null);
+  if(end==null||!(end>=0)) return false;
+  return Math.max(0, end-+shift.odometer)>DRIVER_DAY_KM_MAX;
+}
+/** Км по одному заказу: одометры погрузки/выгрузки и порожние участки, с потолком DRIVER_DAY_KM_MAX. */
+function driverOrderTripKm(o){
+  if(!o) return null;
+  if(o.loadedKm!=null){
+    const loadedKm=+o.loadedKm;
+    if(loadedKm>=0 && loadedKm<=DRIVER_DAY_KM_MAX) return Math.round(loadedKm);
+    if(loadedKm>DRIVER_DAY_KM_MAX) return null;
+  }
+  let sum=0;
+  let parts=0;
+  const start=o.startOdometer!=null?+o.startOdometer:(o.departOdometer!=null?+o.departOdometer:null);
+  const end=o.endOdometer!=null?+o.endOdometer:null;
+  if(start!=null && end!=null){
+    const loaded=end-start;
+    if(loaded>=0 && loaded<=DRIVER_DAY_KM_MAX){ sum+=loaded; parts++; }
+    else if(loaded>DRIVER_DAY_KM_MAX) return null;
+  }
+  const empty=(o.emptyKmBefore||0)+(o.emptyKmAfter||0);
+  if(empty>0 && empty<=DRIVER_DAY_KM_MAX){ sum+=empty; parts++; }
+  else if(empty>DRIVER_DAY_KM_MAX) return null;
+  if(parts) return Math.round(sum);
+  const t=typeof dayTotal==='function'?dayTotal(o):null;
+  if(t!=null && t>=0 && t<=DRIVER_DAY_KM_MAX) return Math.round(t);
+  return null;
+}
+/**
+ * Единый км для UI водителя (главная, история): сначала смена, иначе сумма рейсов;
+ * при сбое ЕТО — «—» и подсказка. Начисление ₽ не трогаем.
+ */
+function driverDayKmDisplay(shift, orders){
+  const list=Array.isArray(orders)?orders:[];
+  const implausible=driverShiftKmImplausible(shift);
+  let tripSum=0;
+  let any=false;
+  list.forEach(o=>{
+    const t=driverOrderTripKm(o);
+    if(t!=null){ tripSum+=t; any=true; }
+  });
+  const shiftKm=driverShiftDayKm(shift);
+  if(shiftKm!=null && shiftKm>0) return { km: shiftKm, hint: '' };
+  if(any) return { km: Math.round(tripSum), hint: implausible?'проверьте одометр ЕТО':'' };
+  if(shiftKm!=null) return { km: shiftKm, hint: '' };
+  if(implausible) return { km: null, hint: 'проверьте одометр ЕТО' };
+  return { km: 0, hint: '' };
+}
+function driverDayKmHtml(disp){
+  if(!disp) return '—';
+  if(disp.km==null){
+    const hint=disp.hint||'проверьте одометр ЕТО';
+    return `<span title="${esc(hint)}">—</span>`;
+  }
+  const hint=disp.hint?` title="${esc(disp.hint)}"`:'';
+  return `<b${hint}>${esc(fmt(disp.km))}</b>`;
+}
 /** Записать одометр в карточку авто (не уменьшаем уже большее значение). */
 function applyVehicleOdometer(plate, companyId, odo){
   if(!plate || !(+odo>=0)) return false;
@@ -2612,6 +2985,30 @@ function healOrderDriverAssignment(o){
   if(changed&&typeof syncOrderDocsOnAssign==='function') syncOrderDocsOnAssign(o);
   return changed;
 }
+/** Заказы водителя для портала /v (без биржи и отменённых). */
+function driverPortalOrderEligible(o, name){
+  const who=name||DRIVER;
+  if(!o || !who || o.cancelledAt || o.onExchange) return false;
+  if(!orderBelongsToDriver(o, who)) return false;
+  return true;
+}
+function driverPortalOrders(name){
+  const who=name||DRIVER;
+  if(!who) return [];
+  return (state.orders||[]).filter(o=>driverPortalOrderEligible(o, who));
+}
+function driverHistEligibleOrder(o){
+  return driverPortalOrderEligible(o);
+}
+function driverHistUniqueOrderCount(days){
+  const ids=new Set();
+  (days||[]).forEach(d=>{
+    (d.orders||[]).forEach(o=>{
+      if(driverHistEligibleOrder(o)) ids.add(o.id);
+    });
+  });
+  return ids.size;
+}
 function orderBelongsToDriver(o, name){
   const who=name||DRIVER;
   if(!o || !who) return false;
@@ -2670,6 +3067,21 @@ function canCloseOrderMessage(order){
   }
   if(!orderAfterLoadingArrival(order)){
     return `Сначала «Выехал», затем «Прибыл на загрузку» с одометром (№${order.sequentialNumber||'—'}).`;
+  }
+  // Погрузка и выгрузка — разные статусы
+  if(typeof orderLifecycleStatusIssues==='function'){
+    const bad=orderLifecycleStatusIssues(order).filter(msg=>{
+      if(msg.indexOf('На погрузке:')===0) return true;
+      if(msg.indexOf('В работе без T2')===0) return true;
+      if(msg.indexOf('В работе: нет T1')===0) return true;
+      if(msg.indexOf('Прибытие на выгрузку без погрузки')===0) return true;
+      if(msg.indexOf('T2 подписан раньше T1')===0) return true;
+      return false;
+    });
+    if(bad.length) return 'Статусы не сходятся: '+bad[0];
+  }
+  if(typeof orderLeftLoading==='function'&&!orderLeftLoading(order)){
+    return `Сначала «Выехал с погрузки» (№${order.sequentialNumber||'—'}) — затем прибытие на выгрузку.`;
   }
   return null;
 }
@@ -2763,6 +3175,17 @@ function upsertOrder(order){
   persist();
 }
 function orderById(id){ return id?(state.orders||[]).find(o=>o.id===id)||null:null; }
+/** Бумажная ТН или ЭТрН. Без явного поля: заказчик=ГО → бумажная ТН; иначе ЭТрН. */
+function orderTransportDocMode(o){
+  const m=String(o&&o.transportDocMode||'').trim();
+  if(m==='paper_tn'||m==='etrn') return m;
+  if(o && o.shipperSameAsCustomer!==false) return 'paper_tn';
+  return 'etrn';
+}
+function orderTransportDocUsesEtrn(o){ return orderTransportDocMode(o)!=='paper_tn'; }
+function orderTransportDocModeLabel(o){
+  return orderTransportDocMode(o)==='paper_tn'?'Бумажная ТН':'ЭТрН';
+}
 /** Заказ, который сейчас закрываем (по id из draft, иначе открытый в работе). */
 function orderBeingClosed(){
   const pinned=orderById(state.draft&&state.draft.closingOrderId);
@@ -2937,6 +3360,26 @@ function healPhantomPortalClose(o){
 function healFalseClosedInboxOrder(o){
   return healPhantomPortalClose(o);
 }
+/** Заявка с портала / order.html без назначения — одометр «выезд» с sync/shift ложный → во «Входящие». */
+function healPhantomPortalTrip(o){
+  if(!o||o.cancelledAt) return false;
+  if(typeof orderKeepsLogist!=='function'||!orderKeepsLogist(o)) return false;
+  if(typeof orderHasDriverVehicleAssigned==='function'){
+    if(orderHasDriverVehicleAssigned(o)) return false;
+  }else{
+    const drv=String(o.driverName||'').trim();
+    const plate=String(o.vehiclePlate||'').trim();
+    if(drv&&plate&&drv!=='Диспетчер'&&drv!=='Биржа'&&drv!=='—'&&plate!=='—'){
+      if(typeof waitingLogistDriver!=='function'||!waitingLogistDriver(drv)) return false;
+    }
+  }
+  if(o.startOdometer==null&&o.departOdometer==null) return false;
+  let changed=false;
+  ['startOdometer','departOdometer','departAt','arrivedAt','endOdometer','loadedKm','emptyKmAfter','closedAt','endAt','parkingAt'].forEach(k=>{
+    if(o[k]!=null&&o[k]!==''){ o[k]=null; changed=true; }
+  });
+  return changed;
+}
 function logistMargin(o){
   const client=+o.priceForClient||0;
   const carr=+o.priceForCarrier||0;
@@ -2965,7 +3408,9 @@ function statusText(o){
   if(o.onExchange && o.startOdometer==null) return 'На бирже (ищем партнёра)';
   if(o.startOdometer!=null && o.staysLoadedOvernight) return 'В работе · до выгрузки';
   if(typeof orderAwaitingFinalize==='function'&&orderAwaitingFinalize(o)) return 'На выгрузке · ждём закрытие';
-  if(o.startOdometer!=null) return 'В работе';
+  // После погрузки: «В работе» только когда выехал с грузом на выгрузку
+  if(o.startOdometer!=null && typeof orderLeftLoading==='function'&&orderLeftLoading(o)) return 'В работе';
+  if(o.startOdometer!=null||o.arrivedAt) return 'На погрузке';
   if(o.departOdometer!=null) return 'В пути · ждём загрузку';
   if(o.executorType==='partner' && o.transportApp) return 'Партнёр везёт';
   if(!o.onExchange && o.startOdometer==null && o.departOdometer==null && waitingLogistDriver(o.driverName)){
@@ -2976,10 +3421,12 @@ function statusText(o){
 /** Колонка канбана логиста (одна на заказ). */
 function adminKanbanColumnKey(o){
   if(!o||o.cancelledAt||(o.closedAt&&o.cancelReason)) return null;
+  if(typeof healPhantomPortalTrip==='function') healPhantomPortalTrip(o);
   if(looksClosedOrder(o)) return 'closed';
   if(o.onExchange&&o.startOdometer==null) return 'exchange';
   if(typeof isLogistInboxOrder==='function'&&isLogistInboxOrder(o)) return 'inbox';
-  if(o.startOdometer!=null||o.departOdometer!=null) return 'progress';
+  // «В пути на погрузку» остаётся в «Назначен»; «В работе» — с прибытия на погрузку
+  if(o.startOdometer!=null||o.arrivedAt) return 'progress';
   return 'assigned';
 }
 /** Снять все связи заказа перед удалением из state.orders. */
@@ -3152,14 +3599,34 @@ function canStartAssignedMessage(){
   if(inProgressOrder()) return 'Сначала закройте текущий заказ';
   return null;
 }
-/** Для выезда: нельзя, если уже в пути или в работе */
+/** Для выезда со стоянки: смена+ЕТО; ЭТрН T1 не блокирует; плюс проверка статусов */
 function canDepartMessage(){
   const gate=canStartAssignedMessage();
   if(gate) return gate;
   if(enRouteOrder()) return 'Сначала отметьте прибытие на загрузку по текущему заказу';
+  const assignedId=state.draft&&state.draft.assignedId;
+  const order=assignedId?(state.orders||[]).find(o=>o.id===assignedId):null;
+  if(order&&typeof orderLifecycleStatusIssues==='function'){
+    const pre=orderLifecycleStatusIssues(order).filter(msg=>{
+      // до выезда не ругаем на шаги погрузки/выгрузки
+      if(msg.indexOf('На погрузке')===0) return false;
+      if(msg.indexOf('На выгрузке')===0) return false;
+      if(msg.indexOf('В работе')===0) return false;
+      if(msg.indexOf('В пути на погрузку:')===0) return false;
+      if(msg.indexOf('Прибытие на погрузку')===0) return false;
+      if(msg.indexOf('Прибытие на выгрузку')===0) return false;
+      if(msg.indexOf('Одометр выгрузки')===0) return false;
+      return true;
+    });
+    if(pre.length) return 'Статусы не сходятся: '+pre[0];
+  }
+  if(order&&typeof orderEtrnReadyForDepart==='function'){
+    const et=orderEtrnReadyForDepart(order);
+    if(!et.ok) return et.message;
+  }
   return null;
 }
-/** Для прибытия: смена+ЕТО; чужие «в работе» не блокируют. */
+/** Для прибытия: смена+ЕТО; чужие «в работе» не блокируют; статусы ЭТрН с шагом. */
 function canArriveMessage(orderId){
   const shift=syncOpenShiftRuntime();
   if(!shift && !state.shift) return 'Сначала откройте смену';
@@ -3168,6 +3635,14 @@ function canArriveMessage(orderId){
   }
   state.step='done';
   const target=orderId?(state.orders||[]).find(o=>o.id===orderId):null;
+  if(target && typeof orderLifecycleStatusIssues==='function'){
+    const bad=orderLifecycleStatusIssues(target).filter(msg=>
+      msg.indexOf('В пути на погрузку: нет T1')===0 ||
+      msg.indexOf('T2 подписан раньше T1')===0 ||
+      msg.indexOf('Прибытие на погрузку без выезда')===0
+    );
+    if(bad.length) return 'Статусы не сходятся: '+bad[0];
+  }
   // Свой заказ «в пути» — как раз то, на что жмём «Прибыл»
   if(target && orderBelongsToDriver(target) && orderEnRouteToLoading(target) && !target.closedAt){
     return null;
@@ -3340,6 +3815,7 @@ function shiftAwaitingClose(shift){
   if(state.orderStep==='closeShiftParking'||state.orderStep==='closeShiftStaysLoaded') return false;
   if(!isEtoDone(s) && !etoFieldsComplete(s)) return false;
   if(inProgressOrder()||enRouteOrder()) return false;
+  if(typeof driverOrdersBlockCloseShift==='function' && driverOrdersBlockCloseShift()) return false;
   return true;
 }
 /** Мягкое напоминание в чат (не чаще раза в 30 мин). */
@@ -3378,7 +3854,7 @@ function renderDriverBanner(){
         <p>${esc(routeText(awaitOdo))}<br>${eto!=null?`Нажмите «${eto} км (как при ЕТО)» внизу.`:'Введите одометр в широком поле ниже.'}</p>`;
     } else {
       html+=`<strong>Заказ №${awaitOdo.sequentialNumber} — одометр на загрузке</strong>
-        <p>${esc(routeText(awaitOdo))}<br>Введите одометр по прибытию в поле ниже и нажмите OK.</p>`;
+        <p>${esc(routeText(awaitOdo))}<br>Введите одометр по прибытию в поле ниже и нажмите «Готово».</p>`;
     }
   }
   enRoute.forEach(o=>{
@@ -3418,6 +3894,18 @@ function isSameLocalDay(iso, now){
   const d=new Date(iso), n=now||new Date();
   if(Number.isNaN(d.getTime())) return false;
   return d.getFullYear()===n.getFullYear() && d.getMonth()===n.getMonth() && d.getDate()===n.getDate();
+}
+/** Календарный день Europe/Moscow (ЕТО водителя, смены). */
+function moscowDayKey(iso){
+  if(!iso) return '';
+  const d=iso instanceof Date?iso:new Date(iso);
+  if(Number.isNaN(d.getTime())) return '';
+  return new Intl.DateTimeFormat('en-CA',{timeZone:'Europe/Moscow',year:'numeric',month:'2-digit',day:'2-digit'}).format(d);
+}
+function isSameMoscowDay(iso, now){
+  if(!iso) return false;
+  const n=now||new Date();
+  return moscowDayKey(iso)===moscowDayKey(n);
 }
 /** Все пункты осмотра заполнены (без проверки дня). */
 function etoFieldsComplete(shift){
@@ -3730,15 +4218,17 @@ function acceptClosePrevThenOpen(value){
     state.orderStep='idle'; state.step='idle'; state.draft={};
     renderInput(); return;
   }
-  const min=prev.lastOdometerPoint??prev.odometer??(state.draft&&state.draft.prevMinOdo);
+  const plate=prev.vehiclePlate||(state.draft&&state.draft.plate)||null;
+  let min=prev.lastOdometerPoint??prev.odometer??(state.draft&&state.draft.prevMinOdo);
+  const etoMin=typeof driverEtoOdometerMin==='function'?driverEtoOdometerMin({ vehiclePlate:plate, ownCompanyId:prev.ownCompanyId, driverName:prev.driverName||DRIVER, lastOdometerPoint:min, etoOdometerSuggest:min }):null;
+  if(etoMin!=null && (min==null || +etoMin>+min)) min=etoMin;
   if(min!=null && value<+min){
-    state.error=`Одометр не может быть меньше вчерашнего (${min})`;
+    state.error=`Одометр не может быть меньше последнего известного (${min})`;
     renderInput(); return;
   }
   add('driver',String(value));
   sealForgottenOpenShift(prev, value);
   syncVehicleOdometerFromShift(prev);
-  const plate=prev.vehiclePlate||(state.draft&&state.draft.plate)||null;
   // Новая смена: тот же одометр = ЕТО до выезда
   state.shift={
     id:uuid(), startedAt:new Date().toISOString(), vehiclePlate:plate,
@@ -4000,6 +4490,30 @@ function healOrphanOrdersIntoShifts(){
   });
   return changed;
 }
+/** С сервера: закрытая смена не должна снова «открываться» у логиста при push. */
+function mergeRemoteShiftClosures(remote){
+  if(!remote||typeof remote!=='object') return false;
+  const remoteShifts=Array.isArray(remote.shifts)?remote.shifts:[];
+  if(!remoteShifts.length) return false;
+  let changed=false;
+  const byId=new Map((state.shifts||[]).map(s=>[s.id,s]));
+  remoteShifts.forEach(rs=>{
+    if(!rs||!rs.id||!rs.endedAt) return;
+    const cur=byId.get(rs.id);
+    if(!cur||cur.endedAt) return;
+    cur.endedAt=rs.endedAt;
+    if(rs.parkingOdometer!=null) cur.parkingOdometer=rs.parkingOdometer;
+    if(rs.lastOdometerPoint!=null) cur.lastOdometerPoint=rs.lastOdometerPoint;
+    if(rs.completedAt) cur.completedAt=rs.completedAt;
+    if(rs.abandoned!=null) cur.abandoned=rs.abandoned;
+    changed=true;
+  });
+  if(state.shift&&state.shift.id){
+    const canon=byId.get(state.shift.id);
+    if(canon&&canon.endedAt){ state.shift=null; changed=true; }
+  }
+  return changed;
+}
 /** После sync remote_ahead — не потерять локальные смены, заказы и чат. */
 function mergeLocalShifts(localShifts){
   if(!Array.isArray(localShifts)||!localShifts.length) return false;
@@ -4201,6 +4715,7 @@ function mergeRemoteOrderAssignments(remote){
       if(typeof healPhantomPortalClose==='function'&&healPhantomPortalClose(cur)) changed=true;
       if(healOrderDriverAssignment(cur)) changed=true;
     }else if(roOk&&curOk){
+      if(mergeOrderFields(cur, ro)) changed=true;
       if(ro.ownFleetDriverId&&!cur.ownFleetDriverId){
         cur.ownFleetDriverId=ro.ownFleetDriverId;
         changed=true;
@@ -4218,10 +4733,11 @@ function reconcileOrdersAfterSync(){
   let changed=false;
   if(typeof migrateRepairOrderOwnersBySpace==='function'&&migrateRepairOrderOwnersBySpace()) changed=true;
   (state.orders||[]).forEach(o=>{
+    if(typeof healPhantomPortalTrip==='function'&&healPhantomPortalTrip(o)) changed=true;
     if(typeof healPortalInboxDriverStub==='function'&&healPortalInboxDriverStub(o)) changed=true;
     if(healOrderDriverAssignment(o)) changed=true;
     if(typeof healPhantomPortalClose==='function'&&healPhantomPortalClose(o)) changed=true;
-    if(typeof syncOrderDocsOnAssign==='function') syncOrderDocsOnAssign(o);
+    if(typeof syncOrderDocsOnAssign==='function'&&syncOrderDocsOnAssign(o)) changed=true;
   });
   if(healOrphanOrdersIntoShifts()) changed=true;
   return changed;
@@ -4798,9 +5314,10 @@ function totalOrderKm(o){
   if(o.estimateKm>0) return +o.estimateKm;
   return null;
 }
-/** Км в пакете: груз + нулевой после (до стоянки). Нулевой до заказа — через подачу. */
+/** Км в пакете: парк → доставка → парк (нулевой до + груз + нулевой после). */
 function packageKmOf(o){
-  if(o.loadedKm!=null || o.emptyKmAfter!=null) return (o.loadedKm||0)+(o.emptyKmAfter||0);
+  if(o.emptyKmBefore!=null || o.loadedKm!=null || o.emptyKmAfter!=null)
+    return (o.emptyKmBefore||0)+(o.loadedKm||0)+(o.emptyKmAfter||0);
   if(o.estimateKm>0) return +o.estimateKm;
   return 0;
 }
@@ -4832,9 +5349,12 @@ function markStaysLoadedOvernight(o){
  * — часы/км сверх пакета плюсуем по факту; ночное хранение сверху.
  */
 function calculateClientTariff(o, fin){
-  const s=Object.assign({}, DEFAULT_FINANCE, fin||state.finance||{});
-  const perKm=(o.ratePerKmCash>0?+o.ratePerKmCash:+s.defaultRatePerKmCash)||80;
-  const perHour=(o.ratePerHourWork>0?+o.ratePerHourWork:+s.defaultRatePerHourWork)||0;
+  const base=Object.assign({}, DEFAULT_FINANCE, fin||state.finance||{});
+  const typeId=typeof tariffTypeIdForOrder==='function'?tariffTypeIdForOrder(o):'';
+  const hasType=!!(typeId&&base.byType&&base.byType[typeId]);
+  const s=hasType&&typeof financeForOrderType==='function'?financeForOrderType(o, base):base;
+  const perKm=hasType?(+s.defaultRatePerKmCash||80):((o.ratePerKmCash>0?+o.ratePerKmCash:+s.defaultRatePerKmCash)||80);
+  const perHour=hasType?(+s.defaultRatePerHourWork||0):((o.ratePerHourWork>0?+o.ratePerHourWork:+s.defaultRatePerHourWork)||0);
   const storageCash=overnightStorageCash(o);
   if(!(perKm>0||perHour>0||storageCash>0)) return null;
   const emptyBefore=o.emptyKmBefore||0;
@@ -4867,7 +5387,10 @@ function calculateClientTariff(o, fin){
   }
   const podachaHourCash=round2(podachaHoursCharged*perHour);
   const excessKm=packageKm>threshold?(packageKm-threshold):0;
-  const excessKmCash=round2(excessKm*perKm);
+  const perKmKad=+s.ratePerKmOutsideKad||0;
+  const outsideKad=o.tripMode==='intercity' && perKmKad>0;
+  const excessRate=outsideKad?perKmKad:perKm;
+  const excessKmCash=round2(excessKm*excessRate);
   const totalCash=round2(workCash+podachaHourCash+excessKmCash+storageCash);
   if(!(totalCash>0)) return null;
   const parts=[];
@@ -4881,8 +5404,10 @@ function calculateClientTariff(o, fin){
     }
   }
   if(packageKm>0){
-    if(excessKmCash>0) parts.push(`сверх ${threshold} км: ${excessKm} км × ${fmt(perKm)} = ${fmt(excessKmCash)} ₽ (груз+после ${packageKm} км)`);
-    else parts.push(`км в пакете: ${packageKm} ≤ ${threshold}`);
+    if(excessKmCash>0) parts.push(outsideKad
+      ? `за КАД ${excessKm} км × ${fmt(excessRate)} = ${fmt(excessKmCash)} ₽ (парк → доставка → парк ${packageKm} км)`
+      : `сверх пакета ${threshold} км: ${excessKm} км × ${fmt(excessRate)} = ${fmt(excessKmCash)} ₽ (парк → доставка → парк ${packageKm} км)`);
+    else parts.push(`км в пакете: ${packageKm} ≤ ${threshold} (парк → доставка → парк)`);
   }
   if(storageCash>0) parts.push(`хранение ${o.overnightNights}×${fmt(o.overnightStorageRateCash)} = ${fmt(storageCash)} ₽`);
   const modeLabel=(perHour>0||perKm>0)?'пакет':'хранение';
@@ -4923,8 +5448,9 @@ function recalculateOrderTariffsForCompany(companyId){
   (state.orders||[]).forEach(o=>{
     if(!o || !o.id || o.cancelledAt || dead.has(o.id)) return;
     if(o.ownCompanyId!==companyId) return;
-    if(fin.defaultRatePerHourWork>0) o.ratePerHourWork=+fin.defaultRatePerHourWork;
-    if(fin.defaultRatePerKmCash>0) o.ratePerKmCash=+fin.defaultRatePerKmCash;
+    const typeFin=typeof financeForOrderType==='function'?financeForOrderType(o, fin):fin;
+    if(typeFin.defaultRatePerHourWork>0) o.ratePerHourWork=+typeFin.defaultRatePerHourWork;
+    if(typeFin.defaultRatePerKmCash>0) o.ratePerKmCash=+typeFin.defaultRatePerKmCash;
     try{ recomputeOrderTimes(ensureOrderTimeStamps(o)); }catch(_){}
     if(!(o.workHours>0) && o.timeLoadedHours>0) o.workHours=+o.timeLoadedHours;
     else if(!(o.workHours>0) && o.estimateWorkHours>0) o.workHours=+o.estimateWorkHours;
@@ -4992,7 +5518,7 @@ function updatePerKmPreview(order){
   const storage=overnightStorageCash(d);
   box.innerHTML=`
     <div class="calc-row"><span>Цепочка км</span><span>${total!=null?`${total} (до ${d.emptyKmBefore||0} + груз ${d.loadedKm||0} + после ${d.emptyKmAfter||0})`:'—'}</span></div>
-    <div class="calc-row"><span>Км в пакете</span><span>${pkg} (груз + после)</span></div>
+    <div class="calc-row"><span>Км в пакете</span><span>${pkg} (парк → доставка → парк)</span></div>
     ${b?`
       <div class="hint">${esc(b.summary)}</div>
       ${storage>0?`<div class="calc-row"><span>Хранение (в сумме)</span><span>${fmt(storage)} руб</span></div>
@@ -5171,12 +5697,15 @@ async function openAdminLoginAsync(){
   const btn=$('pin-ok');
   if(btn) btn.disabled=false;
   if(navigator.onLine!==false && typeof refreshAdminListForLogin==='function'){
+    const listRefreshGen=globalThis.ARMADA_ADMIN_LIST_REFRESH_GEN||0;
     refreshAdminListForLogin().then(synced=>{
+      if((globalThis.ARMADA_ADMIN_LIST_REFRESH_GEN||0)!==listRefreshGen) return;
       if(!synced&&pinErr&&!pinErr.textContent){
-        pinErr.textContent='Список с сервера не обновился — войдите по телефону или ИНН и PIN';
+        pinErr.textContent='Не удалось обновить список с сервера — войдите по телефону или ИНН и PIN';
       }
     }).catch(err=>{
       console.warn('admin login list', err);
+      if((globalThis.ARMADA_ADMIN_LIST_REFRESH_GEN||0)!==listRefreshGen) return;
       if(pinErr&&!pinErr.textContent){
         pinErr.textContent='Сервер не ответил — попробуйте войти по телефону или ИНН и PIN';
       }
@@ -5248,36 +5777,41 @@ function showDefaultAfterSplash(){
   if(typeof openDedicatedEntryScreen==='function' && openDedicatedEntryScreen()) return;
   showRoleHub();
 }
-// Сессию на /a/ /v/ /z/ восстанавливаем; на корне — только хаб ролей (без lastRole).
-try{
-  const urlEntry=typeof dedicatedEntryMode==='function'?dedicatedEntryMode():null;
-  if(urlEntry==='driver' && restoreDriverSession()) show('driver');
-  else if(urlEntry==='admin' && canAutoRestoreAdmin()) show('admin');
-}catch(_){}
+/** Снимок для boot-миграций (делегат в store.js). */
+function bootMigrationSnapshotSig(){
+  return typeof armadaStateComparableSig==='function'?armadaStateComparableSig():'';
+}
+/** Миграции при старте: dataEpoch и persist только если данные реально изменились. */
+function runArmadaBootMigrations(){
+  const sigBefore=bootMigrationSnapshotSig();
+  migrateAdmins();
+  migrateDriverOwners();
+  migrateSpaces();
+  migrateDriverOrderOwners();
+  migrateShiftOwners();
+  migrateDriverPins();
+  migrateCompanyFinance();
+  healVehicleOdometersFromShifts();
+  ensureManufacturerServiceIntervals();
+  (state.vehicles||[]).forEach(v=>{ enrichChecklistHowFromIntervals(v); });
+  purgeCancelledOrders();
+  const sigAfter=bootMigrationSnapshotSig();
+  if(sigBefore===sigAfter) return false;
+  if(typeof bumpDataEpochAuto==='function') bumpDataEpochAuto('migrate-boot');
+  else if(typeof bumpDataEpoch==='function') bumpDataEpoch('migrate-boot');
+  if(typeof persistLocalOnly==='function') persistLocalOnly();
+  return true;
+}
+// Сессию на /a/ /v/ /z/ восстанавливает boot() — без раннего show(), чтобы не мелькал хаб ролей.
 (async function boot(){
   try{
+  if(typeof globalThis!=='undefined'&&globalThis.ARMADA_TEST_RECONCILE_ONLY) return;
   if(typeof initShareSheet==='function') initShareSheet();
   if(typeof wireDocPhotoPreview==='function') wireDocPhotoPreview();
   initEntryFromPage();
   initPortalScopeFromPage();
-  migrateAdmins();
-  let dirty=migrateDriverOwners();
-  if(migrateSpaces()) dirty=true;
-  if(migrateDriverOrderOwners()) dirty=true;
-  if(migrateShiftOwners()) dirty=true;
-  if(migrateDriverPins()) dirty=true;
-  if(migrateCompanyFinance()) dirty=true;
-  if(healVehicleOdometersFromShifts()) dirty=true;
-  if(ensureManufacturerServiceIntervals()) dirty=true;
-  (state.vehicles||[]).forEach(v=>{ if(enrichChecklistHowFromIntervals(v)) dirty=true; });
-  if(purgeCancelledOrders()){
-    bumpDataEpoch('purge-boot');
-    dirty=true;
-  }
-  if(dirty){
-    bumpDataEpoch('migrate-boot');
-    persistLocalOnly();
-  }
+  const guestDedicated=typeof armadaDedicatedGuestNoSession==='function'&&armadaDedicatedGuestNoSession();
+  if(!guestDedicated) runArmadaBootMigrations();
   updateSyncHint();
   const tryDriver=async()=>{
     if(!restoreDriverSession()) return false;
@@ -5289,16 +5823,18 @@ try{
   const urlEntry=typeof dedicatedEntryMode==='function'?dedicatedEntryMode():null;
   const onRoleHub=typeof isRoleHubUrl==='function' && isRoleHubUrl();
   if(urlEntry==='customer'){
-    try{ await initCloudSync(); }catch(_){}
     initPortalScopeFromPage();
-    if(typeof showCustomerPortal==='function') showCustomerPortal();
-    else if(typeof openCustomerLogin==='function') openCustomerLogin();
+    const custRestored=typeof restoreCustomerSession==='function'&&restoreCustomerSession();
+    if(custRestored){
+      try{ await initCloudSync(); }catch(_){}
+      if(typeof showCustomerPortal==='function') showCustomerPortal();
+    }else if(typeof openCustomerLogin==='function') openCustomerLogin();
   } else if(urlEntry==='driver'){
-    try{ await initCloudSync(); }catch(_){}
-    if(await tryDriver()){ /* ok */ }
+    if(await tryDriver()){ /* enterAsDriver — sync внутри */ }
     else openDedicatedEntryScreen();
   } else if(urlEntry==='admin'){
     if(canAutoRestoreAdmin()){
+      try{ await initCloudSync(); }catch(_){}
       show('admin');
       if(typeof renderAdmin==='function') renderAdmin();
       if(window.ArmadaOnboarding) ArmadaOnboarding.maybeAdmin();
@@ -5314,12 +5850,16 @@ try{
       else showDefaultAfterSplash();
     }
   }
-  startAutoSync();
-  if(urlEntry!=='customer'){
-    initCloudSync().then(()=>{
+  if(!guestDedicated){
+    startAutoSync();
+    if(urlEntry!=='customer'){
+      initCloudSync().then(()=>{
+        updateSyncHint();
+        if(typeof reconcileAdminSessionAfterSync==='function') reconcileAdminSessionAfterSync();
+      }).catch(()=>updateSyncHint());
+    } else {
       updateSyncHint();
-      if(typeof reconcileAdminSessionAfterSync==='function') reconcileAdminSessionAfterSync();
-    }).catch(()=>updateSyncHint());
+    }
   } else {
     updateSyncHint();
   }
@@ -5406,6 +5946,7 @@ function wireShellHandlers(){
   if(typeof bindAdminCreate==='function') bindAdminCreate();
 }
 wireShellHandlers();
+armadaApplyMobileEnterKeyHints(document);
 (function bindMobileFocusScroll(){
   let t=null;
   document.addEventListener('focusin',e=>{
@@ -5429,12 +5970,13 @@ document.addEventListener('visibilitychange',()=>{
   }else{
     updateDriverNetHint();
     renderDriverBanner();
+    if(typeof updateDriverEtoBadge==='function') updateDriverEtoBadge();
     if(typeof updateAdminInboxBadge==='function') updateAdminInboxBadge();
   }
 });
 if('serviceWorker' in navigator){
   window.addEventListener('load',()=>{
-    navigator.serviceWorker.register('./sw.js?v='+encodeURIComponent(APP_BUILD))
+    navigator.serviceWorker.register('/sw.js?v='+encodeURIComponent(APP_BUILD), {scope:'/'})
       .then(reg=>{ try{ reg.update(); }catch(_){} })
       .catch(err=>console.warn('SW',err));
     updateDriverNetHint();

@@ -245,7 +245,7 @@ function buildDocTemplateContext(order, spaceId) {
     '{{carrier.inn}}': carrier.inn || '—',
     '{{carrier.address}}': carrier.address || '—',
     '{{customer.name}}': customer.name || '—',
-    '{{customer.inn}}': customer.inn || '—',
+    '{{customer.inn}}': (customer.inn || String(o.customerInn || '').trim()) || '—',
     '{{order.number}}': o.sequentialNumber != null ? String(o.sequentialNumber) : '—',
     '{{order.date}}': typeof dayOnly === 'function' ? dayOnly(o.createdAt) || today : today,
     '{{order.route}}': typeof routeText === 'function' ? routeText(o) || '—' : '—',

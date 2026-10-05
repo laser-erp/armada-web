@@ -7,7 +7,8 @@ const DOC_STATUSES=[
 ];
 const DOC_KINDS=[
   {id:'application', title:'Заявка на перевозку', hint:'Основные данные заявки для заказчика'},
-  {id:'transportApp', title:'Договор‑заявка', hint:'Между заказчиком и перевозчиком'},
+  {id:'paperTn', title:'Транспортная накладная (бланк)', hint:'Печать на погрузке, если у клиента нет своей ТН'},
+  {id:'transportApp', title:'Договор‑заявка', hint:'Печать: для заказчика или для перевозчика (разные суммы)'},
   {id:'act', title:'Акт выполненных работ', hint:'После выполнения / закрытия заказа'}
 ];
 
@@ -39,9 +40,10 @@ function resolveParty(companyId, companyName, spaceId){
   let sp=spaceId?findSpaceById(spaceId):null;
   if(!sp && co && co.spaceId) sp=findSpaceById(co.spaceId);
   const name=(co&&co.name)||(sp&&sp.name)||companyName||'—';
+  const innFromCo=co?String(co.inn||'').trim():'';
   return {
     name,
-    inn:(co&&co.inn)||(sp&&sp.inn)||'',
+    inn:innFromCo||(!co&&(sp&&sp.inn)||''),
     kpp:(co&&co.kpp)||(sp&&sp.kpp)||'',
     ogrn:(co&&co.ogrn)||(sp&&sp.ogrn)||'',
     address:(co&&co.address)||(sp&&sp.address)||''
@@ -56,11 +58,97 @@ function partyLinesHtml(p){
   const addr=p.address?`<div class="muted">${esc(p.address)}</div>`:'';
   return `<div class="party"><strong>${esc(p.name||'—')}</strong>${req}${addr}</div>`;
 }
+/** Сумма для заказчика на бланке (не цена перевозчику). */
+function orderDocCustomerAmount(o){
+  if(!o) return null;
+  if(+o.priceForClient>0) return Math.round(+o.priceForClient);
+  if(o.pricePending) return null;
+  const legacy=typeof clientRate==='function'?clientRate(o):null;
+  if(legacy!=null&&+legacy>0) return Math.round(+legacy);
+  return null;
+}
+function orderDocTariffBasisText(o){
+  const fin=typeof financeForOrder==='function'?financeForOrder(o):null;
+  if(!fin) return '';
+  const bits=[];
+  bits.push(`мин. ${fin.minWorkHours??4} ч работы + ${fin.podachaHours??1} ч подачи`);
+  if(fin.cityKmThreshold>0) bits.push(`в пакете до ${fin.cityKmThreshold} км`);
+  if(fin.defaultRatePerKmCash>0) bits.push(`сверх пакета ${fmt(fin.defaultRatePerKmCash)} ₽/км (нал)`);
+  if(fin.defaultRatePerHourWork>0) bits.push(`${fmt(fin.defaultRatePerHourWork)} ₽/ч`);
+  if(o.tripMode==='intercity') bits.push('межгород');
+  else bits.push('город');
+  if(o.routeKm>0) bits.push(`≈ ${o.routeKm} км`);
+  const vtLabels=Array.isArray(o.vehicleTypeIds)&&o.vehicleTypeIds.length
+    ?o.vehicleTypeIds.map(id=>typeof custVehicleTypeLabel==='function'?custVehicleTypeLabel(id):id).filter(Boolean)
+    :[];
+  if(vtLabels.length) bits.push(vtLabels.join(', '));
+  else if(o.reqBodyType&&typeof bodyTypeLabel==='function'){
+    const body=bodyTypeLabel(o.reqBodyType);
+    if(body) bits.push(`ТС: ${body}`);
+  }
+  return bits.join(' · ');
+}
+function orderDocTariffCalcText(o){
+  if(typeof suggestCustomerOrderPrice!=='function') return '';
+  const quote=suggestCustomerOrderPrice(Object.assign({}, o, {fulfillment:o.fulfillment||'direct'}));
+  return quote&&quote.summary?String(quote.summary).trim():'';
+}
 function orderDocMoneyLine(o){
-  const rate=clientRate(o);
+  const amount=orderDocCustomerAmount(o);
   const form=paymentFormLabel(o);
-  if(rate==null) return `Форма оплаты: ${form}. Сумма не заполнена.`;
-  return `Форма оплаты: ${form}. Сумма к оплате: ${fmt(rate)} ₽`;
+  if(amount==null){
+    return o&&o.pricePending
+      ? `Форма оплаты: ${form}. Стоимость для заказчика уточняется.`
+      : `Форма оплаты: ${form}. Стоимость для заказчика не указана.`;
+  }
+  return `Стоимость перевозки для заказчика: ${fmt(amount)} ₽ (${form}).`;
+}
+function orderDocMoneyBreakdownLine(o){
+  const calc=orderDocTariffCalcText(o);
+  if(calc&&(/Стоимость уточняется|Нет ставки|тарифMissing/i.test(calc))) return 'Стоимость уточняется.';
+  const basis=orderDocTariffBasisText(o);
+  let s='В указанную сумму входит перевозка по тарифу перевозчика';
+  if(basis) s+=` (${basis})`;
+  s+='.';
+  if(calc) s+=` Состав: ${calc}.`;
+  return s;
+}
+/** Сумма перевозчику — только на бланке договор‑заявки для перевозчика. */
+function orderDocCarrierAmount(o){
+  if(!o) return null;
+  if(+o.priceForCarrier>0) return Math.round(+o.priceForCarrier);
+  if(typeof suggestCustomerOrderPrice!=='function') return null;
+  const quote=suggestCustomerOrderPrice(Object.assign({}, o, {fulfillment:o.fulfillment||'direct'}));
+  if(!quote) return null;
+  let base=typeof customerCarrierBaseCash==='function'?customerCarrierBaseCash(quote):null;
+  if(!(base>0)&&quote.minimumCash>0) base=quote.minimumCash;
+  return base>0?Math.round(base):null;
+}
+function orderDocMoneyLineCarrier(o){
+  const amount=orderDocCarrierAmount(o);
+  const form=paymentFormLabel(o);
+  if(amount==null) return `Форма оплаты: ${form}. Вознаграждение перевозчика не указано.`;
+  return `Вознаграждение перевозчика: ${fmt(amount)} ₽ (${form}).`;
+}
+function orderDocMoneyBreakdownLineCarrier(o){
+  const calc=orderDocTariffCalcText(o);
+  if(calc&&(/Стоимость уточняется|Нет ставки|тарифMissing/i.test(calc))) return 'Стоимость уточняется.';
+  const basis=orderDocTariffBasisText(o);
+  let s='Расчёт по тарифу перевозчика';
+  if(basis) s+=` (${basis})`;
+  s+='.';
+  if(calc) s+=` Состав: ${calc}.`;
+  return s;
+}
+function orderPaymentDocLinesForAudience(o, audience){
+  const forCarrier=audience==='carrier';
+  if(forCarrier){
+    const parts=[orderDocMoneyLineCarrier(o), orderDocMoneyBreakdownLineCarrier(o)];
+    const terms=orderDefaultPaymentTerms(o);
+    if(terms) parts.push(terms);
+    return parts.join(' ');
+  }
+  return orderPaymentDocLines(o);
 }
 function orderDocRouteRows(o){
   const pts=ensureRoutePoints(o)||[];
@@ -196,11 +284,20 @@ function orderShipperParty(o){
 }
 function orderConsigneeParty(o){
   if(!o) return {name:'—', inn:'', phone:''};
-  const name=String(o.consigneeName||'').trim()||String(o.unloadingContactName||'').trim();
+  let name=String(o.consigneeName||'').trim()||String(o.unloadingContactName||'').trim();
+  let inn=String(o.consigneeInn||'').trim();
+  let phone=formatPhone(o.consigneePhone||o.unloadingContactPhone||'')||'';
+  if(!name){
+    const customerCo=findCompanyById(o.customerId);
+    const customer=resolveParty(o.customerId, o.customer, o.spaceId);
+    name=customer.name||String(o.customer||'').trim();
+    if(!inn) inn=String(o.customerInn||'').trim()||(customerCo&&customerCo.inn||'');
+    if(!phone) phone=formatPhone(o.contactPhone||'')||'';
+  }
   return {
     name:name||'—',
-    inn:String(o.consigneeInn||'').trim(),
-    phone:formatPhone(o.consigneePhone||o.unloadingContactPhone||'')||''
+    inn,
+    phone
   };
 }
 function partyLinesWithPhoneHtml(p, phone, extra){
@@ -211,8 +308,11 @@ function partyLinesWithPhoneHtml(p, phone, extra){
 }
 function orderCargoWeightText(o){
   if(!o) return '';
-  if(o.cargoWeightKg>0) return `${fmt(o.cargoWeightKg)} кг`;
-  if(o.reqPayloadTons>0) return `${o.reqPayloadTons} т (ориентир по грузоподъёмности)`;
+  const mass=typeof formatOrderCargoMassDisplay==='function'?formatOrderCargoMassDisplay(o):'';
+  if(mass) return mass;
+  if(+o.reqPayloadTons>0 && !(o.source==='armada_sx'||o.customerSubmitted||o.publicLeadId)){
+    return `${formatCargoWeightTonsRu(o.reqPayloadTons)} (ориентир по грузоподъёмности)`;
+  }
   return '';
 }
 function orderCargoDocHtml(o){
@@ -221,7 +321,7 @@ function orderCargoDocHtml(o){
     return o.cargoItems.map((it,i)=>{
       const lines=[];
       lines.push(`<p><strong>${o.cargoItems.length>1?`${i+1}. `:''}${esc(it.text||'—')}</strong></p>`);
-      const weight=it.weightValue?(it.weightUnit==='kg'?`${it.weightValue} кг`:`${it.weightValue} т`):'';
+      const weight=it.weightValue?(it.weightUnit==='kg'?formatCargoWeightKgRu(it.weightValue):formatCargoWeightTonsRu(it.weightValue)):'';
       if(weight) lines.push(`<p>Масса: <strong>${esc(weight)}</strong></p>`);
       if([it.reqLengthM,it.reqWidthM,it.reqHeightM].some(x=>x>0)){
         const dims=[it.reqLengthM,it.reqWidthM,it.reqHeightM].filter(x=>x>0).map(x=>`${x} м`).join(' × ');
@@ -239,9 +339,13 @@ function orderCargoDocHtml(o){
   const weight=orderCargoWeightText(o);
   if(weight) lines.push(`Масса: <strong>${esc(weight)}</strong>`);
   if(o.cargoPlaces>0) lines.push(`Количество мест: <strong>${esc(o.cargoPlaces)}</strong>`);
-  if(o.cargoVolumeM3>0) lines.push(`Объём: <strong>${esc(o.cargoVolumeM3)} м³</strong>`);
+  if(o.cargoVolumeM3>0){
+    const vol=typeof formatVolumeM3Ru==='function'?formatVolumeM3Ru(o.cargoVolumeM3):`${String(o.cargoVolumeM3).replace('.', ',')} м³`;
+    const tag=o.cargoVolumeFromBody?' (объём кузова)':'';
+    lines.push(`Объём: <strong>${esc(vol)}</strong>${tag}`);
+  }
   if([o.reqLengthM,o.reqWidthM,o.reqHeightM].some(x=>x>0)){
-    const dims=[o.reqLengthM,o.reqWidthM,o.reqHeightM].filter(x=>x>0).map(x=>`${x} м`).join(' × ');
+    const dims=[o.reqLengthM,o.reqWidthM,o.reqHeightM].filter(x=>x>0).map(x=>typeof formatCargoDimRuM==='function'?formatCargoDimRuM(x):`${x} м`).join(' × ');
     if(dims) lines.push(`Габариты груза: ${esc(dims)}`);
   }
   if(o.cargoPackaging&&typeof custPackagingLabel==='function'){
@@ -256,17 +360,18 @@ function orderVehicleReqDocHtml(o){
   if(!o) return '<p class="muted">Не указаны</p>';
   const bits=[];
   if(o.tripMode&&typeof tripModeLabel==='function') bits.push(tripModeLabel(o.tripMode));
-  if(o.reqBodyType&&typeof bodyTypeLabel==='function') bits.push(bodyTypeLabel(o.reqBodyType)||o.reqBodyType);
-  if(Array.isArray(o.vehicleTypeIds)&&o.vehicleTypeIds.length){
-    bits.push(o.vehicleTypeIds.map(id=>typeof custVehicleTypeLabel==='function'?custVehicleTypeLabel(id):id).join(', '));
-  }
+  const vtLabels=Array.isArray(o.vehicleTypeIds)&&o.vehicleTypeIds.length
+    ?o.vehicleTypeIds.map(id=>typeof custVehicleTypeLabel==='function'?custVehicleTypeLabel(id):id).filter(Boolean)
+    :[];
+  if(vtLabels.length) bits.push(vtLabels.join(', '));
+  else if(o.reqBodyType&&typeof bodyTypeLabel==='function') bits.push(bodyTypeLabel(o.reqBodyType)||o.reqBodyType);
   if(Array.isArray(o.loadingMethods)&&o.loadingMethods.length){
     bits.push('загр.: '+o.loadingMethods.map(id=>typeof custLoadMethodLabel==='function'?custLoadMethodLabel(id):id).join(', '));
   }
   if(Array.isArray(o.unloadingMethods)&&o.unloadingMethods.length){
     bits.push('выгр.: '+o.unloadingMethods.map(id=>typeof custUnloadMethodLabel==='function'?custUnloadMethodLabel(id):id).join(', '));
   }
-  if(o.reqPayloadTons>0) bits.push('грузоподъёмность от '+o.reqPayloadTons+' т');
+  if(o.reqPayloadTons>0) bits.push('грузоподъёмность ТС '+formatCargoWeightTonsRu(o.reqPayloadTons, {fromMin:true}));
   if(o.routeKm>0) bits.push('~'+o.routeKm+' км');
   if([o.reqLengthM,o.reqWidthM,o.reqHeightM].every(x=>x>0)){
     bits.push(`кузов ≥ ${o.reqLengthM}×${o.reqWidthM}×${o.reqHeightM} м`);
@@ -277,6 +382,12 @@ function orderVehicleReqDocHtml(o){
   }
   return bits.length?`<p>${esc(bits.join(' · '))}</p>`:'<p class="muted">Не указаны</p>';
 }
+function orderTransportAppDocIntro(o, app){
+  if(app&&app.signedAt) return `Подписан в системе: ${dateTime(app.signedAt)}`;
+  const st=o&&o.docs&&o.docs.transportApp&&o.docs.transportApp.status;
+  if(st==='ready'||st==='sent'||st==='signed') return 'Договор‑заявка по данным заказа';
+  return 'Черновик договора‑заявки по данным заказа';
+}
 function orderDefaultPaymentTerms(o){
   if(!o) return '';
   if(String(o.paymentTerms||'').trim()) return String(o.paymentTerms).trim();
@@ -286,9 +397,10 @@ function orderDefaultPaymentTerms(o){
   return 'Оплата наличными по факту выполнения перевозки, если иное не согласовано сторонами.';
 }
 function orderPaymentDocLines(o){
-  const base=orderDocMoneyLine(o);
+  const parts=[orderDocMoneyLine(o), orderDocMoneyBreakdownLine(o)];
   const terms=orderDefaultPaymentTerms(o);
-  return terms?`${base} ${terms}`:base;
+  if(terms) parts.push(terms);
+  return parts.join(' ');
 }
 function orderTransportDeadlineLine(o){
   if(!o) return '';
@@ -338,11 +450,22 @@ function orderCargoPlain(o){
   const bits=[];
   const kind=o.cargoKind&&typeof cargoKindLabel==='function'?cargoKindLabel(o.cargoKind):o.cargoKind;
   if(kind) bits.push(kind);
-  if(o.cargoDescription) bits.push(o.cargoDescription);
+  if(o.cargoDescription){
+    const desc=String(o.cargoDescription).trim();
+    const dupKind=kind&&desc.toLowerCase()===String(kind).toLowerCase();
+    const dupVtype=Array.isArray(o.vehicleTypeIds)&&o.vehicleTypeIds.some(id=>{
+      const lbl=typeof custVehicleTypeLabel==='function'?custVehicleTypeLabel(id):id;
+      return lbl&&desc.toLowerCase()===String(lbl).toLowerCase();
+    });
+    if(!dupKind&&!dupVtype) bits.push(desc);
+  }
   const weight=orderCargoWeightText(o);
   if(weight) bits.push('масса '+weight);
   if(o.cargoPlaces>0) bits.push(o.cargoPlaces+' мест');
-  if(o.cargoVolumeM3>0) bits.push(o.cargoVolumeM3+' м³');
+  if(o.cargoVolumeM3>0){
+    const vol=typeof formatVolumeM3Ru==='function'?formatVolumeM3Ru(o.cargoVolumeM3):`${String(o.cargoVolumeM3).replace('.', ',')} м³`;
+    bits.push(vol+(o.cargoVolumeFromBody?' (объём кузова)':''));
+  }
   const temp=typeof orderTempRangeText==='function'?orderTempRangeText(o):'';
   if(temp) bits.push('темп. '+temp);
   return bits.length?bits.join('; '):'—';
@@ -374,12 +497,16 @@ function orderDriverDetailLines(o){
   if(sts) html+=`<br>СТС: <strong>${esc(sts)}</strong>`;
   return html;
 }
-function buildOrderDocBody(kind, o){
+function buildOrderDocBody(kind, o, opts){
+  opts=opts&&typeof opts==='object'?opts:{};
+  let audience=opts.audience==='carrier'?'carrier':'customer';
+  if(kind==='application'||kind==='act') audience='customer';
   const sid=o.partnerSpaceId||o.spaceId;
   if(typeof buildOrderDocFromTemplate==='function'){
     const tpl=buildOrderDocFromTemplate(kind,o,sid);
     if(tpl) return tpl;
   }
+  const paymentText=orderPaymentDocLinesForAudience(o, audience);
   const own=resolveParty(o.ownCompanyId, o.ownCompanyName, o.spaceId);
   const customer=resolveParty(o.customerId, o.customer, o.spaceId);
   const carrierName=o.carrierCompanyName||(o.executorType==='partner'?'':own.name);
@@ -400,6 +527,47 @@ function buildOrderDocBody(kind, o){
       <h1>${esc(title)}</h1>
       <div class="muted">к заявке № ${esc(num)} · ${esc(when)}</div>
     </div>`;
+  if(kind==='paperTn'){
+    const shipper=orderShipperParty(o);
+    const consignee=orderConsigneeParty(o);
+    const executor=o.executorType==='partner'?carrier:own;
+    const driver=orderDocDriverName(o);
+    const plate=orderDocVehiclePlate(o);
+    const carrierResp=orderCarrierResponsibleLine(o);
+    const deadline=orderTransportDeadlineLine(o);
+    const tnHead=`
+    <div class="doc-head">
+      <div class="brand">АРМАДА</div>
+      <h1>Транспортная накладная</h1>
+      <div class="muted">к заявке № ${esc(num)} · ${esc(when)} · черновик для печати</div>
+    </div>`;
+    return `${tnHead}
+      <p class="muted"><strong>Не юридический документ.</strong> Заполните и проверьте реквизиты перед печатью. Подписи и печати сторон — на бумаге на погрузке и выгрузке (форма по ПП РФ № 2200, прил. № 4).</p>
+      <h2>1. Грузоотправитель</h2>
+      ${partyLinesWithPhoneHtml(shipper, shipper.phone)}
+      <h2>2. Грузополучатель</h2>
+      ${partyLinesWithPhoneHtml(consignee, consignee.phone)}
+      <h2>3. Перевозчик</h2>
+      ${partyLinesWithPhoneHtml(executor, '')}
+      ${carrierResp?`<p>Ответственный перевозчика: ${esc(carrierResp)}</p>`:''}
+      <h2>4. Заказчик перевозки</h2>
+      ${partyLinesWithPhoneHtml(customer, formatPhone(o.contactPhone||''), contact!=='—'?`Контакт: ${contact}`:'')}
+      <h2>5. Сведения о грузе</h2>
+      ${orderCargoDocHtml(o)}
+      <h2>6. Маршрут и сроки</h2>
+      <p>Подача ТС: <strong>${esc(o.vehicleAt?dateTime(o.vehicleAt):'—')}</strong></p>
+      ${deadline?`<p>${esc(deadline)}</p>`:''}
+      <table><thead><tr><th>Точка</th><th>Адрес</th></tr></thead><tbody>${orderDocRouteRowsDetailed(o)}</tbody></table>
+      <h2>7. Транспорт и водитель</h2>
+      <p>Водитель: <strong>${esc(driver)}</strong> · ТС: <strong>${esc(plate)}</strong></p>
+      ${orderVehicleReqDocHtml(o)}
+      <h2>8. Подписи на погрузке / выгрузке</h2>
+      ${orderDocSignBlock(o, 'Грузоотправитель / сдал', 'Водитель / принял', o.contactName||shipper.name, driver)}
+      <div class="sign" style="margin-top:18px">
+        <div>Грузополучатель / принял: _______________ / ${esc(consignee.name||'_______________')}</div>
+        <div>Водитель / сдал: _______________ / ${esc(driver)}</div>
+      </div>`;
+  }
   if(kind==='application'){
     const shipper=orderShipperParty(o);
     const consignee=orderConsigneeParty(o);
@@ -427,7 +595,7 @@ function buildOrderDocBody(kind, o){
       <h2>8. Транспорт и водитель</h2>
       <p>${orderDriverDetailLines(o)}</p>
       <h2>9. Стоимость и порядок расчётов</h2>
-      <p>${esc(orderPaymentDocLines(o))}</p>
+      <p>${esc(paymentText)}</p>
       ${orderDocSignBlock(o, 'Грузоотправитель', 'Перевозчик', o.contactName||shipper.name, o.ownerAdminName||executor.name)}`;
   }
   if(kind==='transportApp'){
@@ -438,7 +606,7 @@ function buildOrderDocBody(kind, o){
     const carrierResp=orderCarrierResponsibleLine(o);
     const deadline=orderTransportDeadlineLine(o);
     const custPhone=formatPhone(o.contactPhone||'');
-    const signedNote=app&&app.signedAt?`Подписан в системе: ${dateTime(app.signedAt)}`:'Черновик договора‑заявки по данным заказа';
+    const signedNote=orderTransportAppDocIntro(o, app);
     return `${commonHead}
       <p class="muted">${esc(signedNote)}</p>
       <h2>1. Грузоотправитель</h2>
@@ -461,8 +629,8 @@ function buildOrderDocBody(kind, o){
       ${orderVehicleReqDocHtml(o)}
       <h2>8. Транспорт и водитель</h2>
       <p>${orderDriverDetailLines(o)}</p>
-      <h2>9. Оплата и порядок расчётов</h2>
-      <p>${esc(orderPaymentDocLines(o))}</p>
+      <h2>9. ${audience==='carrier'?'Оплата перевозчику':'Оплата и порядок расчётов'}</h2>
+      <p>${esc(paymentText)}</p>
       ${orderDocSignBlock(o, 'Заказчик', 'Перевозчик', o.contactName||left.name, o.ownerAdminName||right.name)}`;
   }
   const driver=orderDocDriverName(o);
@@ -546,7 +714,7 @@ function refreshOrderDocRow(orderId, kind){
     meta.textContent=`${kindMeta.hint}${updated}`;
   }
 }
-function printOrderDoc(orderId, kind){
+function printOrderDoc(orderId, kind, audience){
   const o=state.orders.find(x=>x.id===orderId); if(!o) return;
   ensureOrderDocs(o);
   if(!o.docs[kind]) return;
@@ -557,8 +725,10 @@ function printOrderDoc(orderId, kind){
     upsertOrder(o);
     refreshOrderDocRow(orderId, kind);
   }
-  const title=`${(DOC_KINDS.find(k=>k.id===kind)||{}).title||'Документ'} · заявка №${o.sequentialNumber}`;
-  openPrintHtml(title, buildOrderDocBody(kind, o));
+  const aud=audience==='carrier'?'carrier':'customer';
+  const baseTitle=(DOC_KINDS.find(k=>k.id===kind)||{}).title||'Документ';
+  const title=`${baseTitle}${kind==='transportApp'&&aud==='carrier'?' (перевозчик)':''} · заявка №${o.sequentialNumber}`;
+  openPrintHtml(title, buildOrderDocBody(kind, o, {audience:aud}));
 }
 function setOrderDocStatus(orderId, kind, status){
   const o=state.orders.find(x=>x.id===orderId); if(!o) return;
@@ -584,13 +754,20 @@ function orderDocsSectionHtml(o){
       </div>
       <div class="doc-actions">
         <select data-doc-status="${esc(k.id)}" aria-label="Статус: ${esc(k.title)}">${opts}</select>
-        <button type="button" class="secondary" data-doc-print="${esc(k.id)}">Печать</button>
+        ${k.id==='transportApp'
+          ?`<button type="button" class="secondary" data-doc-print="transportApp" data-doc-audience="customer">Заказчик</button>
+            <button type="button" class="secondary" data-doc-print="transportApp" data-doc-audience="carrier">Перевозчик</button>`
+          :`<button type="button" class="secondary" data-doc-print="${esc(k.id)}">Печать</button>`}
       </div>
     </div>`;
   }).join('');
+  const modeHint=(typeof orderTransportDocMode==='function'&&orderTransportDocMode(o)==='paper_tn')
+    ?'<p class="form-section-hint">Водитель выбрал <strong>бумажную ТН</strong> — печать бланка ниже (логист дополняет грузоотправителя и груз в карточке).</p>'
+    :'';
   return `<section class="form-section" id="order-docs-section">
     <h2 class="form-section-title">Документы</h2>
     <p class="form-section-hint">Печать или PDF через диалог браузера. Статус сохраняется в заявке.</p>
+    ${modeHint}
     <div class="docs-list">${rows}</div>
   </section>`;
 }
@@ -598,7 +775,7 @@ function wireOrderDocs(orderId){
   document.querySelectorAll('#detail-form [data-doc-print]').forEach(btn=>{
     btn.onclick=e=>{
       e.preventDefault();
-      printOrderDoc(orderId, btn.getAttribute('data-doc-print'));
+      printOrderDoc(orderId, btn.getAttribute('data-doc-print'), btn.getAttribute('data-doc-audience')||'customer');
     };
   });
   document.querySelectorAll('#detail-form [data-doc-status]').forEach(sel=>{
@@ -826,7 +1003,7 @@ function buildFrameworkContractBody(customerCo, carrierCo){
     <h2>4. Оплата</h2>
     <p>Оплата производится по счёту Перевозчика в сроки, указанные в заявке. Форма расчётов — безналичный перевод или иная, согласованная сторонами.</p>
     <h2>5. Электронное взаимодействие (MVP)</h2>
-    <p>Настоящий договор может быть принят Заказчиком путём проставления отметки «Согласен с условиями» в портале с фиксацией даты и времени. Полноценная квалифицированная подпись — через оператора ЭДО (Контур, СБИС, Диадoc) после подключения интеграции.</p>
+    <p>Настоящий договор может быть принят Заказчиком путём проставления отметки «Согласен с условиями» в портале с фиксацией даты и времени. Полноценная квалифицированная подпись — через оператора ЭДО (Контур, СБИС, Диадок) после подключения интеграции.</p>
     <h2>6. Срок</h2>
     <p>Договор действует с даты подписания до расторжения любой из сторон с уведомлением за 30 календарных дней.</p>
     <div class="sign">
@@ -868,42 +1045,61 @@ function orderDriverVehicleDocsTextData(o, snap){
     sts:(snap&&s.sts!=null?s.sts:orderStsText(o)).trim()
   };
 }
-function buildCustomerDriverDocsTextSnapshot(o){
-  const t=orderDriverVehicleDocsTextData(o);
+function normalizeCustomerDriverDocsText(t){
+  const s=v=>String(v==null?'':v).trim();
+  const phoneRaw=s(t&&t.driverPhone);
+  const phone=typeof formatPhone==='function'&&phoneRaw?formatPhone(phoneRaw):phoneRaw;
   return {
-    driverName:t.driverName,
-    driverPhone:t.driverPhone,
-    passport:t.passport,
-    passportIssued:t.passportIssued,
-    license:t.license,
-    licenseIssued:t.licenseIssued,
-    plate:t.plate,
-    sts:t.sts
+    driverName:s(t&&t.driverName),
+    driverPhone:phone,
+    passport:s(t&&t.passport),
+    passportIssued:s(t&&t.passportIssued),
+    license:s(t&&t.license),
+    licenseIssued:s(t&&t.licenseIssued),
+    plate:s(t&&t.plate),
+    sts:s(t&&t.sts)
   };
+}
+function buildCustomerDriverDocsTextSnapshot(o){
+  return normalizeCustomerDriverDocsText(orderDriverVehicleDocsTextData(o));
+}
+function customerDriverDocsConfirmContentSig(text, photosSig){
+  return JSON.stringify({ text: normalizeCustomerDriverDocsText(text||{}), photosSig: String(photosSig||'') });
+}
+function orderDocsAssignComparableSnap(o){
+  if(!o) return '';
+  const text=buildCustomerDriverDocsTextSnapshot(o);
+  const photosSig=orderDriverVehicleDocPhotos(o).map(p=>p.label).join('|');
+  const contentSig=customerDriverDocsConfirmContentSig(text, photosSig);
+  const docs=typeof ensureOrderDocs==='function'?ensureOrderDocs(o):o.docs||{};
+  const docBits={};
+  ['application','transportApp'].forEach(k=>{
+    const c=docs[k];
+    docBits[k]=c?{status:String(c.status||'')}:{status:''};
+  });
+  const confirmSig=String(o.customerDriverDocsConfirmContentSig||'');
+  return JSON.stringify({contentSig, confirmSig, docBits});
 }
 function publishCustomerDriverDocsConfirm(o){
   if(!o||typeof orderHasDriverVehicleAssigned!=='function'||!orderHasDriverVehicleAssigned(o)) return false;
-  if(typeof syncOrderDriverVehicleDocs==='function') syncOrderDriverVehicleDocs(o);
   const text=buildCustomerDriverDocsTextSnapshot(o);
   const photos=orderDriverVehicleDocPhotos(o);
   const hasText=Object.values(text).some(v=>String(v||'').trim());
   const hasCore=String(text.driverName||'').trim()&&String(text.plate||'').trim()&&text.plate!=='—';
   if(!hasText&&!photos.length&&!hasCore) return false;
-  const prevSnap=o.customerDriverDocsConfirm&&o.customerDriverDocsConfirm.text;
-  const prevPhotosSig=String(o.customerDriverDocsConfirmPhotosSig||'');
   const photosSig=photos.map(p=>p.label).join('|');
-  const snapChanged=JSON.stringify(prevSnap)!==JSON.stringify(text) || prevPhotosSig!==photosSig;
+  const sig=customerDriverDocsConfirmContentSig(text, photosSig);
+  if(sig===String(o.customerDriverDocsConfirmContentSig||'') && o.customerDriverDocsConfirm&&o.customerDriverDocsConfirm.text){
+    return false;
+  }
   o.customerDriverDocsConfirm={
-    at:new Date().toISOString(),
+    at:o.customerDriverDocsConfirm&&o.customerDriverDocsConfirm.at?o.customerDriverDocsConfirm.at:new Date().toISOString(),
     text
   };
   o.customerDriverDocsConfirmPhotosSig=photosSig;
-  if(snapChanged){
-    o.customerDriverDocsConfirmRev=(+(o.customerDriverDocsConfirmRev||0))+1;
-    if(typeof bumpDataEpoch==='function') bumpDataEpoch('customer-drv-docs-confirm');
-    return true;
-  }
-  return false;
+  o.customerDriverDocsConfirmContentSig=sig;
+  o.customerDriverDocsConfirmRev=(+(o.customerDriverDocsConfirmRev||0))+1;
+  return true;
 }
 function orderDriverVehicleDocsTextRowsHtml(t){
   if(!t) return '';
@@ -1022,29 +1218,37 @@ function healTransportAppDriver(o){
 }
 function syncOrderDocsOnAssign(o){
   if(!o||!orderHasDriverVehicleAssigned(o)) return false;
+  const snapBefore=orderDocsAssignComparableSnap(o);
   if(typeof syncOrderDriverVehicleDocs==='function') syncOrderDriverVehicleDocs(o);
   if(typeof publishCustomerDriverDocsConfirm==='function') publishCustomerDriverDocsConfirm(o);
   ensureOwnFleetTransportApp(o);
   ensureOrderDocs(o);
   const now=new Date().toISOString();
-  let changed=false;
   ['application','transportApp'].forEach(kind=>{
     const cur=o.docs[kind];
-    if(cur && (cur.status==='draft'||!cur.updatedAt)){
+    if(!cur||typeof cur!=='object') return;
+    if(cur.status==='draft'){
       cur.status='ready';
+      if(!cur.updatedAt) cur.updatedAt=now;
+    }else if(cur.status==='ready'&&!cur.updatedAt){
       cur.updatedAt=now;
-      changed=true;
     }
   });
-  if(changed) bumpDataEpoch('doc-assign-sync');
-  return changed;
+  const snapAfter=orderDocsAssignComparableSnap(o);
+  if(snapBefore===snapAfter) return false;
+  if(typeof bumpDataEpochAuto==='function') bumpDataEpochAuto('doc-assign-sync', o.id);
+  else if(typeof bumpDataEpoch==='function') bumpDataEpoch('doc-assign-sync');
+  return true;
 }
 
 function customerOrderDocStatus(kind, o){
   ensureOrderDocs(o);
   if(kind==='invoice'){
     const inv=typeof findInvoiceByOrderId==='function'?findInvoiceByOrderId(o.id):null;
-    return inv?{label:'Готов', cls:'ready', available:true}:{label:'После заявки', cls:'draft', available:false};
+    const ready=typeof invoiceReadyForCustomer==='function'?invoiceReadyForCustomer(o, inv):!!(inv&&inv.amount>0);
+    if(!inv) return {label:'После заявки', cls:'draft', available:false};
+    if(!ready) return {label:'После согласования цены', cls:'draft', available:false};
+    return {label:'Готов', cls:'ready', available:true};
   }
   if(kind==='framework'){
     const co=findCompanyById(o.customerId);
@@ -1054,6 +1258,10 @@ function customerOrderDocStatus(kind, o){
   if(kind==='act'){
     if(!looksClosedOrder(o)) return {label:'После закрытия заказа', cls:'draft', available:false};
     return {label:'Готов', cls:'ready', available:true};
+  }
+  if(kind==='paperTn'){
+    if(!orderHasDriverVehicleAssigned(o)) return {label:'После назначения ТС', cls:'draft', available:false};
+    return {label:'Бланк для печати', cls:'ready', available:true};
   }
   if(kind==='etrn'){
     const et=o.etrn;
@@ -1083,40 +1291,56 @@ function customerOrderDocStatus(kind, o){
   const st=o.docs[kind]&&o.docs[kind].status||'draft';
   return {label:docStatusLabel(st), cls:st, available:st!=='draft'};
 }
+function customerPaperTnOrderHintHtml(o){
+  if(!o) return '';
+  if(typeof orderTransportDocUsesEtrn==='function'&&orderTransportDocUsesEtrn(o)) return '';
+  return `<p class="meta cust-paper-tn-hint">Документ: бумажная ТН</p>`;
+}
 function customerOrderDocumentsHtml(o){
+  const usesEtrn=typeof orderTransportDocUsesEtrn==='function'?orderTransportDocUsesEtrn(o):true;
   const items=[
     {id:'invoice', title:'Счёт на оплату'},
     {id:'framework', title:'Рамочный договор'},
     {id:'application', title:'Заявка на перевозку'},
     {id:'transportApp', title:'Договор‑заявка'},
-    {id:'etrn', title:'ЭТрН'},
+    usesEtrn
+      ?{id:'etrn', title:'ЭТрН'}
+      :{id:'paperTn', title:'Транспортная накладная (бумажная)'},
     {id:'act', title:'Акт выполненных работ'}
   ];
   const email=customerContactEmail(o);
   const rows=items.map(it=>{
     const st=customerOrderDocStatus(it.id, o);
-    const openBtn=st.available
-      ?`<button type="button" class="secondary cust-doc-open" data-order-id="${esc(o.id)}" data-doc-kind="${esc(it.id)}">Открыть</button>`
-      :`<span class="hint">—</span>`;
+    let mainBtn='';
+    if(it.id==='paperTn'){
+      mainBtn=st.available
+        ?`<button type="button" class="secondary cust-doc-print-tn" data-order-id="${esc(o.id)}">Печать бланка</button>`
+        :`<span class="hint">—</span>`;
+    }else{
+      mainBtn=st.available
+        ?`<button type="button" class="secondary cust-doc-open" data-order-id="${esc(o.id)}" data-doc-kind="${esc(it.id)}">Открыть</button>`
+        :`<span class="hint">—</span>`;
+    }
     let etrnSignBtn='';
-    if(it.id==='etrn'&&typeof customerEtrnT1Pending==='function'&&customerEtrnT1Pending(o)
+    if(usesEtrn&&it.id==='etrn'&&typeof customerEtrnT1Pending==='function'&&customerEtrnT1Pending(o)
       &&typeof customerCanSignEtrnT1==='function'&&customerCanSignEtrnT1(o)){
       etrnSignBtn=`<button type="button" class="primary cust-etrn-t1-sign" data-order-id="${esc(o.id)}">Подписать T1</button>`;
     }
-    const mailBtn=email&&documentEmailCanSend(it.id, o)
+    const mailBtn=email&&it.id!=='paperTn'&&documentEmailCanSend(it.id, o)
       ?`<button type="button" class="secondary cust-doc-email" data-order-id="${esc(o.id)}" data-doc-kind="${esc(it.id)}">На email</button>`
       :'';
     return `<div class="cust-doc-row">
       <div><span class="cust-doc-name">${esc(it.title)}</span>
       <span class="doc-status ${esc(st.cls)}">${esc(st.label)}</span></div>
-      <div class="cust-doc-actions">${etrnSignBtn}${openBtn}${mailBtn}</div>
+      <div class="cust-doc-actions">${etrnSignBtn}${mainBtn}${mailBtn}</div>
     </div>`;
   }).join('');
-  const etrnHint=(typeof customerEtrnT1Pending==='function'&&customerEtrnT1Pending(o))
+  const etrnHint=(usesEtrn&&typeof customerEtrnT1Pending==='function'&&customerEtrnT1Pending(o))
     ?'<p class="hint">ЭТрН — электронная транспортная накладная. T1 подписывает грузоотправитель здесь кнопкой «Подписать T1», не путать с «Договор‑заявкой».</p>'
     :'';
+  const paperHint=!usesEtrn?customerPaperTnOrderHintHtml(o):'';
   const emailHint=email?`<p class="hint cust-doc-email-hint">Документы можно отправить на ${esc(email)}</p>`:'';
-  return `<div class="cust-order-docs">${etrnHint}${emailHint}${rows}</div>`;
+  return `<div class="cust-order-docs">${paperHint}${etrnHint}${emailHint}${rows}</div>`;
 }
 function customerContactEmail(o){
   const co=o&&findCompanyById(o.customerId);
@@ -1137,7 +1361,10 @@ function samePhone(a,b){
 }
 function documentEmailCanSend(kind, o){
   if(!customerContactEmail(o)) return false;
-  if(kind==='invoice') return !!(typeof findInvoiceByOrderId==='function'&&findInvoiceByOrderId(o.id));
+  if(kind==='invoice'){
+    const inv=typeof findInvoiceByOrderId==='function'?findInvoiceByOrderId(o.id):null;
+    return !!(inv&&typeof invoiceReadyForCustomer==='function'&&invoiceReadyForCustomer(o, inv));
+  }
   if(kind==='framework') return true;
   if(kind==='etrn') return !!o.etrn;
   if(kind==='act') return looksClosedOrder(o);
@@ -1243,7 +1470,7 @@ function openCustomerOrderDocument(orderId, kind){
     return;
   }
   const title=`${(DOC_KINDS.find(k=>k.id===kind)||{}).title||'Документ'} · заявка №${o.sequentialNumber}`;
-  openPrintHtml(title, buildOrderDocBody(kind, o));
+  openPrintHtml(title, buildOrderDocBody(kind, o, {audience:'customer'}));
 }
 function wireCustomerOrderDocuments(root){
   (root||document).querySelectorAll('.cust-doc-open').forEach(btn=>{
@@ -1262,6 +1489,13 @@ function wireCustomerOrderDocuments(root){
     btn.onclick=e=>{
       e.preventDefault();
       sendCustomerAllReadyDocumentsEmail(btn.getAttribute('data-order-id'));
+    };
+  });
+  (root||document).querySelectorAll('.cust-doc-print-tn').forEach(btn=>{
+    btn.onclick=e=>{
+      e.preventDefault();
+      const orderId=btn.getAttribute('data-order-id');
+      if(typeof printOrderDoc==='function') printOrderDoc(orderId,'paperTn','customer');
     };
   });
 }
@@ -1287,7 +1521,7 @@ function customerFrameworkContractBannerHtml(customerCo, carrierCo, opts){
   }
   return `<section class="form-section cust-contract-banner" id="cust-contract-banner">
     <h2 class="form-section-title">Рамочный договор</h2>
-    <p class="hint">Для работы с ${esc(carrierName)} нужен договор на перевозку. Прочитайте условия и подтвердите согласие — или подключите Контур/Диадoc позже.</p>
+    <p class="hint">Для работы с ${esc(carrierName)} нужен договор на перевозку. Прочитайте условия и подтвердите согласие — или подключите Контур/Диадок позже.</p>
     <div class="cust-contract-actions">
       <button type="button" class="secondary" id="cust-contract-preview">Просмотреть договор</button>
       <label class="cust-check-item"><input type="checkbox" id="cust-contract-agree"/> Согласен с условиями договора</label>

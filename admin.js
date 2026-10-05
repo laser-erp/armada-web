@@ -456,6 +456,8 @@ function setAdminNav(nav){
   closeAdminSidebar();
   if(nav==='catalogs'){ openCatalogs(); return; }
   if(nav==='settings'){ if(typeof openCabinetSettings==='function') openCabinetSettings('hub'); return; }
+  if(nav==='connect-leads'){ openAdminConnectLeads(); return; }
+  if(nav==='social'){ openAdminSocial(); return; }
   if(nav==='activity'){ openAdminActivity(); return; }
   if(nav==='billing'){ openAdminBilling(); return; }
   if(nav==='plans'){ openAdminPlans(); return; }
@@ -475,11 +477,16 @@ function setAdminNav(nav){
 }
 function updateAdminChrome(){
   const act=$('admin-activity');
+  const conn=$('admin-connect-leads');
+  const social=$('admin-social');
   const bill=$('admin-billing');
   const plans=$('admin-plans');
   if(act) act.style.display=isSuperAdmin()?'':'none';
+  if(conn) conn.style.display=isSuperAdmin()?'':'none';
+  if(social) social.style.display=isSuperAdmin()?'':'none';
   if(bill) bill.style.display=isSuperAdmin()?'':'none';
   if(plans) plans.style.display=isSuperAdmin()?'':'none';
+  if(typeof updateAdminConnectLeadsBadge==='function') updateAdminConnectLeadsBadge();
   const title=$('admin-title');
   const userEl=$('admin-sidebar-user');
   if(!currentAdmin){
@@ -539,8 +546,12 @@ function restoreAdminSession(){
   syncAdminNotifyToggle();
   return true;
 }
+function bumpAdminLoginListRefreshGen(){
+  try{ globalThis.ARMADA_ADMIN_LIST_REFRESH_GEN=(globalThis.ARMADA_ADMIN_LIST_REFRESH_GEN||0)+1; }catch(_){}
+}
 async function loginAdmin(){
   migrateAdmins();
+  bumpAdminLoginListRefreshGen();
   const pinErr=$('pin-error');
   if(pinErr) pinErr.textContent='';
   const btn=$('pin-ok');
@@ -560,7 +571,7 @@ async function loginAdmin(){
   let loginSyncOk=false;
   try{
     if(navigator.onLine!==false && typeof fetchServerState==='function'){
-      const rec=await fetchServerState(8000, { pin, meta: { role:'admin' } });
+      const rec=await fetchServerState(8000, { pin:'sync', meta: { role:'sync' } });
       if(rec&&rec.payload){
         loginSyncOk=true;
         pbRecordId=rec.id;
@@ -573,11 +584,21 @@ async function loginAdmin(){
       }
     }
   }catch(_){}
-  const adm=findAdminByLoginAndPin(loginRaw, pin);
+  let adm=null;
+  if(navigator.onLine!==false && typeof armadaApiVerifyAdmin==='function'){
+    const verified=await armadaApiVerifyAdmin(loginRaw, pin);
+    if(verified&&verified.admin){
+      adm=verified.admin;
+      const full=(state.admins||[]).find(a=>a.id===adm.id);
+      if(full) adm={...full, ...adm, pin:full.pin};
+      else adm={...adm, pin:''};
+    }
+  }
+  if(!adm) adm=findAdminByLoginAndPin(loginRaw, pin);
   if(!adm){
     if(pinErr){
       if(!loginSyncOk && navigator.onLine!==false){
-        pinErr.textContent='Не удалось загрузить данные с сервера. Обновите страницу (Ctrl+F5) и попробуйте снова';
+        pinErr.textContent='Сессия с сервером устарела или сервер недоступен. Обновите страницу (Ctrl+F5) и войдите снова по телефону или ИНН и PIN';
       }else if(looksLikeAdminPhoneInput(loginRaw)){
         const phone=typeof formatPhone==='function'?formatPhone(loginRaw):String(loginRaw||'').trim();
         const phoneKnown=(state.admins||[]).some(a=>adminLoginPhone(a)===phone);
@@ -592,7 +613,8 @@ async function loginAdmin(){
     }
     return;
   }
-  if(pin!==String(adm.pin)){
+  const localPin=String(adm.pin||'').trim();
+  if(localPin && pin!==localPin){
     if(pinErr) pinErr.textContent='Неверный PIN. Если доступ только что восстановили — обновите страницу (Ctrl+F5)';
     return;
   }
@@ -606,7 +628,7 @@ async function loginAdmin(){
   pushAdminLogin('login');
   touchAdminPresence('admin');
   startPresenceHeartbeat();
-  armadaApiLogin(pin, currentAdmin).finally(()=>persist());
+  armadaApiLogin('sync', {role:'sync'}).finally(()=>persist());
   updateAdminChrome();
   if(typeof clearEntrySkin==='function') clearEntrySkin();
   if(typeof finishSplashOnce==='function') finishSplashOnce('admin');
@@ -620,7 +642,11 @@ async function loginAdmin(){
     if(btn) btn.disabled=false;
   }
 }
-function logoutAdmin(){
+async function logoutAdmin(){
+  if(typeof armadaConfirm==='function'){
+    const ok=await armadaConfirm({title:'Выйти из кабинета?', message:'', okLabel:'Выйти'});
+    if(!ok) return;
+  }
   if(currentAdmin){
     pushAdminLogin('logout');
     clearMyPresence();
@@ -634,6 +660,104 @@ function logoutAdmin(){
   updateAdminChrome();
   if(getEntryMode()==='admin') goEntryLanding('admin');
   else show('roles');
+}
+function updateAdminConnectLeadsBadge(){
+  const badge=$('admin-connect-leads-badge');
+  if(!badge) return;
+  const n=typeof pendingConnectLeadsCount==='function'?pendingConnectLeadsCount():0;
+  if(n>0){ badge.hidden=false; badge.textContent=String(n); }
+  else { badge.hidden=true; badge.textContent=''; }
+}
+function wireCustomerPortalLeadButtons(root, rerender){
+  if(!root) return;
+  root.querySelectorAll('.lead-open-order-btn').forEach(b=>b.onclick=()=>{
+    const id=b.dataset.orderId;
+    if(!id) return;
+    if(typeof openDetail==='function') openDetail(id);
+  });
+  root.querySelectorAll('.lead-done-btn').forEach(b=>b.onclick=()=>{
+    if(!isSuperAdmin()) return;
+    const id=b.dataset.leadId;
+    if(!id||typeof markCustomerPortalLeadDone!=='function') return;
+    markCustomerPortalLeadDone(id);
+    if(typeof rerender==='function') rerender();
+    updateAdminConnectLeadsBadge();
+  });
+}
+function openAdminConnectLeads(){
+  if(!isSuperAdmin()){ alert('Доступно только супер админу'); return; }
+  renderAdminConnectLeads();
+  show('admin-connect-leads-screen');
+}
+function renderAdminConnectLeads(){
+  migrateCustomerPortalLeads();
+  const portalLeads=typeof pendingPortalAccessLeads==='function'?pendingPortalAccessLeads():[];
+  const carrierLeads=typeof pendingCarrierConnectLeads==='function'?pendingCarrierConnectLeads():[];
+  const logistLeads=typeof pendingLogistConnectLeads==='function'?pendingLogistConnectLeads():[];
+  const form=$('connect-leads-form');
+  if(!form) return;
+  const emptyAll=!portalLeads.length&&!carrierLeads.length&&!logistLeads.length;
+  form.innerHTML=`
+    <p class="cat-panel-hint">Очередь с лендингов: подключить <strong>заказчика</strong> (портал /z), <strong>перевозчика</strong> или <strong>логиста</strong> (пилот). Заявки на перевозку с <a href="/order.html" target="_blank" rel="noopener">order.html</a> — в канбан «Входящие».</p>
+    ${emptyAll?`<div class="empty" style="margin:12px 0">Нет необработанных заявок на подключение</div>`:''}
+    <section class="form-section">
+      <h2 class="form-section-title">Новый заказчик · портал</h2>
+      <p class="cat-panel-hint">С <a href="/kp-zakaz.html" target="_blank" rel="noopener">kp-zakaz.html</a> — «Хочу отправлять грузы». В справочнике включите портал и выдайте PIN.</p>
+      <div class="cat-list">
+        ${portalLeads.length?portalLeads.map(l=>`
+          <div class="item-card" data-lead-id="${esc(l.id)}">
+            <div class="item-top">
+              <div class="item-name">${esc(l.company)}</div>
+              <span class="hint">${esc(typeof dateTime==='function'?dateTime(l.createdAt):l.createdAt)}</span>
+            </div>
+            <div class="hint">${esc(l.phone)}${l.inn?` · ИНН ${esc(l.inn)}`:''}${l.contactName?` · ${esc(l.contactName)}`:''}</div>
+            ${l.comment?`<div class="hint">${esc(l.comment)}</div>`:''}
+            ${l.carrierHint?`<div class="hint">Перевозчик: ${esc(l.carrierHint)}</div>`:''}
+            <div class="row" style="margin-top:8px">
+              <button type="button" class="secondary lead-done-btn" data-lead-id="${esc(l.id)}">Обработано</button>
+            </div>
+          </div>`).join(''):`<div class="empty">Пока пусто</div>`}
+      </div>
+    </section>
+    <section class="form-section">
+      <h2 class="form-section-title">Новый перевозчик</h2>
+      <p class="cat-panel-hint"><a href="/pilot.html?role=carrier" target="_blank" rel="noopener">pilot.html</a> · роль перевозчик. Создайте space, админа, кабинет /a и /v.</p>
+      <div class="cat-list">
+        ${carrierLeads.length?carrierLeads.map(l=>`
+          <div class="item-card" data-lead-id="${esc(l.id)}">
+            <div class="item-top">
+              <div class="item-name">${esc(l.company)} · перевозчик</div>
+              <span class="hint">${esc(typeof dateTime==='function'?dateTime(l.createdAt):l.createdAt)}</span>
+            </div>
+            <div class="hint">${esc(l.phone)}${l.contactName?` · ${esc(l.contactName)}`:''}${l.city?` · ${esc(l.city)}`:''}${l.fleetSize?` · ${esc(l.fleetSize)} маш.`:''}</div>
+            ${l.comment?`<div class="hint">${esc(l.comment)}</div>`:''}
+            <div class="row" style="margin-top:8px">
+              <button type="button" class="secondary lead-done-btn" data-lead-id="${esc(l.id)}">Обработано</button>
+            </div>
+          </div>`).join(''):`<div class="empty">Пока пусто</div>`}
+      </div>
+    </section>
+    <section class="form-section">
+      <h2 class="form-section-title">Новый логист · кабинет</h2>
+      <p class="cat-panel-hint"><a href="/pilot.html?role=logist" target="_blank" rel="noopener">pilot.html</a> · роль логист. Пилот 30 дней — space, админ, справочники.</p>
+      <div class="cat-list">
+        ${logistLeads.length?logistLeads.map(l=>`
+          <div class="item-card" data-lead-id="${esc(l.id)}">
+            <div class="item-top">
+              <div class="item-name">${esc(l.company)} · логист</div>
+              <span class="hint">${esc(typeof dateTime==='function'?dateTime(l.createdAt):l.createdAt)}</span>
+            </div>
+            <div class="hint">${esc(l.phone)}${l.contactName?` · ${esc(l.contactName)}`:''}${l.city?` · ${esc(l.city)}`:''}${l.fleetSize?` · ${esc(l.fleetSize)} маш.`:''}</div>
+            ${l.comment?`<div class="hint">${esc(l.comment)}</div>`:''}
+            <div class="row" style="margin-top:8px">
+              <button type="button" class="secondary lead-done-btn" data-lead-id="${esc(l.id)}">Обработано</button>
+            </div>
+          </div>`).join(''):`<div class="empty">Пока пусто</div>`}
+      </div>
+    </section>`;
+  $('connect-leads-back').onclick=()=>{ show('admin'); renderAdmin(); };
+  wireCustomerPortalLeadButtons(form, renderAdminConnectLeads);
+  updateAdminConnectLeadsBadge();
 }
 function openAdminActivity(){
   if(!isSuperAdmin()){ alert('Доступно только супер админу'); return; }
@@ -732,7 +856,7 @@ function renderAdminBilling(){
         <label class="meta">Логотип на входе заказчика (PNG/JPG, до 80 КБ)</label>
         <div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-top:4px">
           ${sp.portalLogo?`<img src="${esc(sp.portalLogo)}" alt="" style="height:40px;border-radius:8px;border:1px solid #e2e8f0" />`:''}
-          <input type="file" accept="image/png,image/jpeg,image/webp" data-bill-logo="${esc(sp.id)}" />
+          ${typeof filePickInputHtml==='function'?filePickInputHtml(`data-bill-logo="${esc(sp.id)}"`):`<input type="file" accept="image/png,image/jpeg,image/webp" data-bill-logo="${esc(sp.id)}" />`}
           ${sp.portalLogo?`<button type="button" class="secondary" data-bill-logo-clear="${esc(sp.id)}">Убрать</button>`:''}
         </div>
       </div>
@@ -860,6 +984,720 @@ function paintEpdServerStatus(){
     el.textContent='armada-api: ошибка проверки';
   });
 }
+function marketingSocialTelegramBlockHtml(){
+  if(typeof migrateMarketingSocial==='function') migrateMarketingSocial();
+  const ms=state.marketingSocial||{};
+  const url=ms.telegramChannelUrl||'';
+  return `
+    <section class="form-section" id="marketing-telegram-section">
+      <h2 class="form-section-title">Telegram</h2>
+      <p class="hint">Промо-канал. Автопост из Армады — позже; сейчас публикуйте в Telegram вручную.</p>
+      ${url
+        ?`<p class="hint ok">Подключена ссылка</p>
+           <a class="primary" href="${esc(url)}" target="_blank" rel="noopener" style="display:inline-block;width:auto;padding:10px 14px;text-decoration:none;margin-top:8px">Открыть канал</a>`
+        :`<p class="hint">Ссылку канала задайте во вкладке <strong>Настройки</strong>.</p>`}
+    </section>`;
+}
+function marketingSocialVkBlockHtml(){
+  if(typeof migrateMarketingSocial==='function') migrateMarketingSocial();
+  const ms=state.marketingSocial||{};
+  const url=ms.vkGroupUrl||'';
+  return `
+    <section class="form-section" id="marketing-vk-section">
+      <h2 class="form-section-title">ВКонтакте</h2>
+      <p class="hint">Сообщество. Автопост из Армады — позже; сейчас публикуйте в VK вручную.</p>
+      ${url
+        ?`<p class="hint ok">Подключена ссылка</p>
+           <a class="primary" href="${esc(url)}" target="_blank" rel="noopener" style="display:inline-block;width:auto;padding:10px 14px;text-decoration:none;margin-top:8px">Открыть группу</a>`
+        :`<p class="hint">Ссылку группы задайте во вкладке <strong>Настройки</strong>.</p>`}
+    </section>`;
+}
+function normalizeMaxBotTokenInput(raw){
+  let t=String(raw||'').trim().replace(/[\u200B-\u200D\uFEFF]/g,'');
+  if(/^bearer\s+/i.test(t)) t=t.replace(/^bearer\s+/i,'').trim();
+  const authM=t.match(/^authorization:\s*(.+)$/i);
+  if(authM) t=authM[1].trim();
+  if((t.startsWith('"')&&t.endsWith('"'))||(t.startsWith("'")&&t.endsWith("'"))) t=t.slice(1,-1).trim();
+  if(/токен\s+(успешно\s+)?скопирован/i.test(t)) return '';
+  return t;
+}
+function maxBotTokenFieldError(tok){
+  const t=normalizeMaxBotTokenInput(tok);
+  if(!t) return '';
+  if(/•/.test(t)||/\u2022/.test(t)||/[^\x21-\x7E]/.test(t)) return 'В токене есть символы «•» или кириллица — это маска из интерфейса, не токен MAX. Скопируйте строку AAH… с dev.max.ru.';
+  if(/^https?:\/\//i.test(t)||/max\.ru/i.test(t)) return 'Это ссылка на канал, не токен бота. dev.max.ru → Чат-боты → ⋮ → Настройки → копировать access_token';
+  if(t.length<16) return 'Слишком короткая строка — похоже, в буфер попало не то (не текст «токен скопирован»). Выделите токен в поле на dev.max.ru и скопируйте вручную (Ctrl+C).';
+  return '';
+}
+function updateMaxBotTokenPasteHint(){
+  const el=$('max-bot-token-hint');
+  const inp=$('max-bot-token');
+  if(!el||!inp) return;
+  const t=normalizeMaxBotTokenInput(inp.value||'');
+  if(!t){ el.textContent='После вставки здесь должна быть длина ~40+ символов (латиница/цифры). Если 0 — вставка не прошла или в буфере не токен.'; el.className='hint'; return; }
+  el.textContent=`В поле ${t.length} симв. · начало: ${t.slice(0,4)}…${t.slice(-3)} (токен MAX не показываем целиком)`;
+  el.className='hint ok';
+}
+function normalizeMaxChatIdInput(raw){
+  let s=String(raw||'').trim();
+  const fromUrl=s.match(/id(-?\d+)_biz/i);
+  if(fromUrl) return fromUrl[1];
+  s=s.replace(/\s+/g,'');
+  // API MAX: chat_id — int64, может быть с минусом (см. api-schema x-pattern \-?\d+)
+  const m=s.match(/^-?\d+$/);
+  if(m) return m[0];
+  const digits=s.replace(/[^\d-]/g,'').replace(/(?!^)-/g,'');
+  if(/^-?\d+$/.test(digits)) return digits;
+  return s.replace(/\D/g,'');
+}
+function maxChatIdFieldError(chatId, {required}={}){
+  const raw=String(chatId||'').trim();
+  const id=normalizeMaxChatIdInput(raw);
+  if(!id){
+    if(required===false && !raw) return '';
+    return 'Укажите chat_id канала из MAX (кнопка «Найти chat_id»). Это не цифры из ссылки и не ИНН.';
+  }
+  if(id.replace(/^-/,'').length<5) return 'chat_id слишком короткий';
+  return '';
+}
+async function persistMaxSettingsImmediate(){
+  if(typeof persistAdminPinImmediate!=='function'){ persist(); return { ok:true }; }
+  const r=await persistAdminPinImmediate();
+  if(r&&r.ok) return r;
+  const msg=r&&r.offline?'Нет интернета — на сервер не отправилось'
+    :(r&&r.err?String(r.err.message||r.err):'Не удалось сохранить на сервер');
+  throw new Error(msg);
+}
+/** Шаблоны ленты MAX — тексты из MAX_ARMADA_PLAN.md §4 */
+const MAX_POST_TEMPLATES=[
+  {id:'docs', title:'1. Документы', text:
+`Договор, договор-заявка и документы по рейсу
+больше не нужно собирать вручную в Word.
+
+В Армаде они оформляются автоматически
+из карточки заказа — быстрее и без ошибок копирования.
+
+Меньше бумаги. Больше закрытых рейсов.
+
+Попробовать: https://app.armada.sx/`},
+  {id:'logist', title:'2. Для логиста', text:
+`Логисту в Армаде:
+
+• все заявки в одном кабинете
+• сначала свой парк, остаток — партнёрам
+• статусы рейса без лишних звонков
+• документы формируются сами
+
+Меньше переписок — больше контроля.
+
+Кабинет логиста: https://app.armada.sx/`},
+  {id:'customer', title:'3. Для заказчика', text:
+`Заказчику не нужны бесконечные звонки
+«сколько будет» и «где машина».
+
+В портале Армады:
+• заявка с телефона
+• цена и статус сразу
+• прозрачный ход рейса
+
+Оставить заявку: https://armada.sx/
+Войти: https://app.armada.sx/`},
+  {id:'carrier', title:'4. Для перевозчика', text:
+`Перевозчику в Армаде:
+
+• заказы от логистов в одном месте
+• ставка сразу в цифрах
+• назначение водителя и ТС
+• водитель ведёт рейс с телефона
+
+Меньше хаоса в переписке — больше понятных рейсов.
+
+Войти: https://app.armada.sx/`},
+  {id:'start', title:'5. Как начать', text:
+`Как начать работу в Армаде:
+
+1. Откройте https://app.armada.sx/
+2. Войдите по роли: логист / перевозчик / заказчик
+3. Создайте заявку или примите в работу
+4. Документы и статусы ведутся в системе
+
+Один контур — от заявки до закрытия рейса.
+
+Войти: https://app.armada.sx/`}
+];
+function maxPostStatusLabel(st){
+  return ({draft:'черновик',scheduled:'ждёт',published:'опубликован',failed:'ошибка',cancelled:'отменён'})[st]||st||'—';
+}
+function maxPostDatetimeLocalValue(iso){
+  if(!iso) return '';
+  const d=new Date(iso);
+  if(Number.isNaN(d.getTime())) return '';
+  const pad=n=>String(n).padStart(2,'0');
+  return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+function maxPostQueueListHtml(queue){
+  const q=(queue||[]).slice().sort((a,b)=>{
+    const ta=new Date(a.scheduledAt||a.updatedAt||a.createdAt||0).getTime();
+    const tb=new Date(b.scheduledAt||b.updatedAt||b.createdAt||0).getTime();
+    return tb-ta;
+  });
+  if(!q.length) return `<p class="hint">Очередь пуста — напишите текст ниже или вставьте шаблон.</p>`;
+  return `<div class="max-post-queue" style="display:flex;flex-direction:column;gap:8px;margin-top:8px">${q.map(item=>{
+    const st=item.status||'draft';
+    const preview=(item.text||'').replace(/\s+/g,' ').trim().slice(0,120);
+    const when=st==='scheduled'&&item.scheduledAt
+      ?(typeof dateTime==='function'?dateTime(item.scheduledAt):item.scheduledAt)
+      :(st==='published'&&item.publishedAt?(typeof dateTime==='function'?dateTime(item.publishedAt):item.publishedAt):'');
+    const err=st==='failed'&&item.error?`<div class="hint err-hint">${esc(item.error)}</div>`:'';
+    const canEdit=st==='draft'||st==='scheduled'||st==='failed';
+    const canPub=st==='draft'||st==='scheduled'||st==='failed';
+    const canCancel=st==='draft'||st==='scheduled'||st==='failed';
+    return `<div class="card" style="padding:10px;border:1px solid var(--border,#ddd);border-radius:8px" data-max-post-id="${esc(item.id)}">
+      <div style="display:flex;flex-wrap:wrap;gap:6px;align-items:center;justify-content:space-between">
+        <strong>${esc(item.title||'Пост')}</strong>
+        <span class="hint">${esc(maxPostStatusLabel(st))}${when?(' · '+esc(when)):''}</span>
+      </div>
+      <div class="hint" style="margin-top:4px">${esc(preview)}${(item.text||'').length>120?'…':''}</div>
+      ${err}
+      <div class="row" style="margin-top:8px;gap:6px;flex-wrap:wrap">
+        ${canEdit?`<button type="button" class="secondary max-post-edit" data-id="${esc(item.id)}" style="width:auto;padding:6px 10px">Править</button>`:''}
+        ${canPub?`<button type="button" class="primary max-post-publish-now" data-id="${esc(item.id)}" style="width:auto;padding:6px 10px">В канал сейчас</button>`:''}
+        ${canCancel?`<button type="button" class="secondary max-post-cancel" data-id="${esc(item.id)}" style="width:auto;padding:6px 10px">Отменить</button>`:''}
+      </div>
+    </div>`;
+  }).join('')}</div>`;
+}
+function marketingMaxPostsPanelHtml(){
+  if(typeof migrateMarketingMax==='function') migrateMarketingMax();
+  const mm=state.marketingMax||{ bot:{ token:'', chatId:'', enabled:false }, queue:[] };
+  const ready=!!(mm.bot&&mm.bot.token&&mm.bot.chatId);
+  const q=Array.isArray(mm.queue)?mm.queue:[];
+  const pending=q.filter(p=>p&&(p.status==='draft'||p.status==='scheduled')).length;
+  const due=q.filter(p=>p&&p.status==='scheduled'&&p.scheduledAt&&new Date(p.scheduledAt).getTime()<=Date.now()).length;
+  const tplOpts=MAX_POST_TEMPLATES.map(t=>`<option value="${esc(t.id)}">${esc(t.title)}</option>`).join('');
+  return `
+    <section class="form-section" id="marketing-max-section">
+      <h2 class="form-section-title">MAX — посты</h2>
+      <p class="hint">${ready
+        ?`Канал подключён${mm.bot.enabled?' · автопубликация вкл.':''}`
+        :`Токен или chat_id не видны — проверьте вкладку <strong>Настройки</strong>. Текст можно писать здесь.`}</p>
+      <p class="hint">Не пишите про ГАЗ и «витрину аренды». В постах — польза app.armada.sx.</p>
+      <label>Шаблон</label>
+      <div class="row" style="gap:8px;flex-wrap:wrap;align-items:center">
+        <select id="max-post-template" style="flex:1;min-width:180px">${tplOpts}</select>
+        <button type="button" class="secondary" id="max-post-insert-tpl" style="width:auto">Вставить шаблон</button>
+      </div>
+      <label style="margin-top:8px">Заголовок (для списка)</label>
+      <input id="max-post-title" maxlength="120" placeholder="Например: Документы" style="width:100%" />
+      <label style="margin-top:8px">Текст поста</label>
+      <textarea id="max-post-text" rows="10" maxlength="4000" placeholder="Текст для канала MAX…" style="width:100%;font-family:inherit"></textarea>
+      <input type="hidden" id="max-post-edit-id" value="" />
+      <label style="margin-top:8px">Отложить на</label>
+      <input id="max-post-when" type="datetime-local" style="width:100%;max-width:280px" />
+      <div class="row" style="margin-top:10px;gap:8px;flex-wrap:wrap">
+        <button type="button" class="secondary" id="max-post-save-draft" style="width:auto">Черновик</button>
+        <button type="button" class="secondary" id="max-post-schedule" style="width:auto">Отложить</button>
+        <button type="button" class="primary" id="max-post-publish" style="width:auto">В канал сейчас</button>
+        <button type="button" class="secondary" id="max-post-clear" style="width:auto">Очистить</button>
+        ${due?`<button type="button" class="secondary" id="max-bot-tick" style="width:auto">Отправить отложенные (${due})</button>`:''}
+      </div>
+      <p class="hint max-status-banner" id="max-post-editor-status" role="status" aria-live="polite"></p>
+      <h3 class="form-section-title" style="margin-top:16px;font-size:1.05rem">Очередь${pending?` · ${pending}`:''}</h3>
+      ${maxPostQueueListHtml(q)}
+    </section>`;
+}
+function marketingSocialSettingsPanelHtml(){
+  if(typeof migrateMarketingMax==='function') migrateMarketingMax();
+  if(typeof migrateMarketingSocial==='function') migrateMarketingSocial();
+  const mm=state.marketingMax||{ bot:{ token:'', chatId:'', enabled:false }, queue:[] };
+  const ms=state.marketingSocial||{ telegramChannelUrl:'', vkGroupUrl:'' };
+  const maxTok=mm.bot&&mm.bot.token?String(mm.bot.token):'';
+  const maxChat=mm.bot&&mm.bot.chatId?String(mm.bot.chatId):'';
+  const maxTokStoredErr=maxBotTokenFieldError(maxTok);
+  const maxTokMask=maxTok&&typeof isPlausibleMaxBotToken==='function'&&isPlausibleMaxBotToken(maxTok)?('****'+maxTok.slice(-4)):(maxTok?'битый':'не задан');
+  return `
+    <section class="form-section" id="marketing-settings-section">
+      <h2 class="form-section-title">Настройки</h2>
+      <p class="hint">Подключение каналов. Пошагово MAX: <a href="/plans/marketing/MAX_PODKLUCHENIE.md" target="_blank" rel="noopener">инструкция</a>.</p>
+
+      <h3 class="form-section-title" style="margin-top:12px;font-size:1rem">MAX — бот</h3>
+      <label>Токен бота</label>
+      <input id="max-bot-token" type="text" spellcheck="false" autocapitalize="off" autocomplete="off" placeholder="AAH… с dev.max.ru" style="width:100%;font-family:monospace;font-size:.85rem" />
+      <p class="hint" id="max-bot-token-hint">На сервере: токен ${esc(maxTokMask)} · chat_id ${esc(maxChat||'не задан')}</p>
+      ${maxTokStoredErr?`<p class="hint err-hint">${esc(maxTokStoredErr)}</p>`:''}
+      <label>chat_id канала</label>
+      <input id="max-bot-chat-id" inputmode="text" placeholder="из «Найти chat_id»" value="${esc(maxChat)}" style="width:100%;font-family:monospace" />
+      <label class="check" style="margin-top:8px"><input type="checkbox" id="max-bot-enabled" ${mm.bot&&mm.bot.enabled?'checked':''}/> Автопубликация отложенных</label>
+      <p class="hint max-status-banner" id="max-bot-status" role="status" aria-live="polite"></p>
+      <div class="row" style="margin-top:8px;gap:8px;flex-wrap:wrap">
+        <button type="button" class="primary" id="max-bot-save" style="width:auto">Сохранить MAX</button>
+        <button type="button" class="secondary" id="max-bot-discover" style="width:auto">Найти chat_id</button>
+        <button type="button" class="secondary" id="max-bot-test" style="width:auto">Проверить связь</button>
+      </div>
+
+      <h3 class="form-section-title" style="margin-top:18px;font-size:1rem">Telegram</h3>
+      <label>Ссылка на канал</label>
+      <input id="social-tg-url" type="url" placeholder="https://t.me/…" value="${esc(ms.telegramChannelUrl||'')}" style="width:100%" />
+      <div class="row" style="margin-top:8px;gap:8px">
+        <button type="button" class="secondary" id="social-tg-save" style="width:auto">Сохранить TG</button>
+      </div>
+      <p class="hint" id="social-tg-status"></p>
+
+      <h3 class="form-section-title" style="margin-top:14px;font-size:1rem">ВКонтакте</h3>
+      <label>Ссылка на группу</label>
+      <input id="social-vk-url" type="url" placeholder="https://vk.com/…" value="${esc(ms.vkGroupUrl||'')}" style="width:100%" />
+      <div class="row" style="margin-top:8px;gap:8px">
+        <button type="button" class="secondary" id="social-vk-save" style="width:auto">Сохранить VK</button>
+      </div>
+      <p class="hint" id="social-vk-status"></p>
+    </section>`;
+}
+/** @deprecated use marketingMaxPostsPanelHtml / marketingSocialSettingsPanelHtml */
+function marketingMaxPanelHtml(){
+  return marketingMaxPostsPanelHtml();
+}
+function setMaxBotStatus(msg,isErr){
+  const el=$('max-bot-status');
+  if(!el) return;
+  el.textContent=msg||'';
+  el.className='hint max-status-banner'+(isErr?' err-hint':' ok');
+}
+async function saveMaxBotSettingsFromForm(rerender){
+  if(!isSuperAdmin()){ alert('Доступно только супер-админу'); return false; }
+  if(typeof migrateMarketingMax==='function') migrateMarketingMax();
+  if(!state.marketingMax||!state.marketingMax.bot){
+    state.marketingMax={ bot:{ token:'', chatId:'', enabled:false }, queue:[] };
+  }
+  const tokInput=normalizeMaxBotTokenInput(($('max-bot-token')||{}).value||'');
+  const chatRaw=(($('max-bot-chat-id')||{}).value||'');
+  const chatId=normalizeMaxChatIdInput(chatRaw);
+  const storedTok=String(state.marketingMax.bot.token||'');
+  const storedChat=String(state.marketingMax.bot.chatId||'');
+  const tok=tokInput||storedTok;
+  if(tokInput){
+    const tokErr=maxBotTokenFieldError(tokInput);
+    if(tokErr){ setMaxBotStatus(tokErr, true); alert(tokErr); return false; }
+  } else if(maxBotTokenFieldError(storedTok)||!storedTok){
+    const msg='Вставьте access_token бота в поле «Токен» (с dev.max.ru). Без токена сохранить нельзя.';
+    setMaxBotStatus(msg, true); alert(msg); return false;
+  }
+  if(chatRaw.trim()){
+    const chatErr=maxChatIdFieldError(chatRaw, {required:true});
+    if(chatErr){ setMaxBotStatus(chatErr, true); alert(chatErr); return false; }
+  }
+  if(tokInput) state.marketingMax.bot.token=tokInput;
+  if(chatRaw.trim()) state.marketingMax.bot.chatId=chatId;
+  else if(storedChat) state.marketingMax.bot.chatId=storedChat;
+  state.marketingMax.bot.enabled=!!(($('max-bot-enabled')||{}).checked);
+  if(!Array.isArray(state.marketingMax.queue)) state.marketingMax.queue=[];
+  const btn=$('max-bot-save');
+  const prevLabel=btn?btn.textContent:'';
+  if(btn){ btn.disabled=true; btn.textContent='Сохранение…'; }
+  setMaxBotStatus('Отправка на сервер…', false);
+  try{
+    await persistMaxSettingsImmediate();
+    if(typeof rerender==='function') rerender();
+    const mask=tok.length>8?('****'+tok.slice(-4)):'задан';
+    const cid=String(state.marketingMax.bot.chatId||'');
+    setMaxBotStatus(
+      cid
+        ? `Сохранено на сервере · токен ${mask} · chat_id ${cid}. Можно «Тестовый пост».`
+        : `Токен сохранён (${mask}). chat_id ещё нет — нажмите «Найти chat_id».`,
+      false
+    );
+    return true;
+  }catch(e){
+    const msg=String(e.message||e);
+    setMaxBotStatus(msg, true);
+    alert('Не сохранилось: '+msg);
+    return false;
+  }finally{
+    const b=$('max-bot-save');
+    if(b){ b.disabled=false; b.textContent=prevLabel||'Сохранить MAX'; }
+  }
+}
+function setMaxPostEditorStatus(msg,isErr){
+  const el=$('max-post-editor-status');
+  if(!el) return;
+  el.textContent=msg||'';
+  el.className='hint max-status-banner'+(isErr?' err-hint':' ok');
+}
+function clearMaxPostEditorForm(){
+  if($('max-post-edit-id')) $('max-post-edit-id').value='';
+  if($('max-post-title')) $('max-post-title').value='';
+  if($('max-post-text')) $('max-post-text').value='';
+  if($('max-post-when')) $('max-post-when').value='';
+}
+function readMaxPostEditorForm(){
+  const id=(($('max-post-edit-id')||{}).value||'').trim();
+  const title=(($('max-post-title')||{}).value||'').trim().slice(0,120);
+  const text=(($('max-post-text')||{}).value||'').trim().slice(0,4000);
+  const whenRaw=(($('max-post-when')||{}).value||'').trim();
+  let scheduledAt='';
+  if(whenRaw){
+    const d=new Date(whenRaw);
+    if(Number.isNaN(d.getTime())) throw new Error('Некорректная дата отложения');
+    scheduledAt=d.toISOString();
+  }
+  return { id, title, text, scheduledAt };
+}
+function ensureMaxPostQueue(){
+  if(typeof migrateMarketingMax==='function') migrateMarketingMax();
+  if(!state.marketingMax) state.marketingMax={ bot:{ token:'', chatId:'', enabled:false }, queue:[] };
+  if(!Array.isArray(state.marketingMax.queue)) state.marketingMax.queue=[];
+  return state.marketingMax.queue;
+}
+function upsertMaxPostInQueue({id, title, text, status, scheduledAt}){
+  const queue=ensureMaxPostQueue();
+  const now=new Date().toISOString();
+  let item=id?queue.find(p=>p&&p.id===id):null;
+  if(!item){
+    item={
+      id:typeof uuid==='function'?uuid():('maxp_'+Date.now()),
+      createdAt:now
+    };
+    queue.unshift(item);
+  }
+  item.title=title||item.title||'Пост';
+  item.text=text;
+  item.status=status;
+  item.scheduledAt=scheduledAt||'';
+  item.error='';
+  item.updatedAt=now;
+  return item;
+}
+function loadMaxPostIntoEditor(postId){
+  const queue=ensureMaxPostQueue();
+  const item=queue.find(p=>p&&p.id===postId);
+  if(!item){ setMaxPostEditorStatus('Пост не найден', true); return; }
+  if($('max-post-edit-id')) $('max-post-edit-id').value=item.id;
+  if($('max-post-title')) $('max-post-title').value=item.title||'';
+  if($('max-post-text')) $('max-post-text').value=item.text||'';
+  if($('max-post-when')) $('max-post-when').value=maxPostDatetimeLocalValue(item.scheduledAt||'');
+  setMaxPostEditorStatus('Редактирование: '+maxPostStatusLabel(item.status));
+  const ta=$('max-post-text');
+  if(ta&&typeof ta.scrollIntoView==='function') ta.scrollIntoView({ behavior:'smooth', block:'center' });
+}
+async function saveMaxPostDraft(rerender){
+  if(!isSuperAdmin()){ alert('Доступно только супер-админу'); return; }
+  try{
+    const form=readMaxPostEditorForm();
+    if(!form.text) throw new Error('Введите текст поста');
+    const item=upsertMaxPostInQueue({
+      id:form.id, title:form.title, text:form.text, status:'draft', scheduledAt:''
+    });
+    await persistMaxSettingsImmediate();
+    setMaxPostEditorStatus('Черновик сохранён');
+    if($('max-post-edit-id')) $('max-post-edit-id').value=item.id;
+    if(typeof rerender==='function') rerender();
+  }catch(e){ setMaxPostEditorStatus(String(e.message||e), true); }
+}
+async function scheduleMaxPost(rerender){
+  if(!isSuperAdmin()){ alert('Доступно только супер-админу'); return; }
+  try{
+    const form=readMaxPostEditorForm();
+    if(!form.text) throw new Error('Введите текст поста');
+    if(!form.scheduledAt) throw new Error('Укажите дату и время отложения');
+    if(new Date(form.scheduledAt).getTime()<=Date.now()-60000) throw new Error('Время отложения должно быть в будущем');
+    const item=upsertMaxPostInQueue({
+      id:form.id, title:form.title, text:form.text, status:'scheduled', scheduledAt:form.scheduledAt
+    });
+    if(!state.marketingMax.bot.enabled){
+      state.marketingMax.bot.enabled=true;
+      if($('max-bot-enabled')) $('max-bot-enabled').checked=true;
+    }
+    await persistMaxSettingsImmediate();
+    setMaxPostEditorStatus('Отложено. Включена автопубликация — нажимайте «Опубликовать due-посты» или дождитесь cron.');
+    if($('max-post-edit-id')) $('max-post-edit-id').value=item.id;
+    if(typeof rerender==='function') rerender();
+  }catch(e){ setMaxPostEditorStatus(String(e.message||e), true); }
+}
+async function publishMaxPostNow(postId, rerender){
+  if(!isSuperAdmin()){ alert('Доступно только супер-админу'); return; }
+  if(typeof marketingMaxPublishPost!=='function'){ setMaxPostEditorStatus('API недоступен', true); return; }
+  try{
+    let id=postId;
+    if(!id){
+      const form=readMaxPostEditorForm();
+      if(!form.text) throw new Error('Введите текст поста');
+      const item=upsertMaxPostInQueue({
+        id:form.id, title:form.title, text:form.text, status:'draft', scheduledAt:''
+      });
+      id=item.id;
+      await persistMaxSettingsImmediate();
+    }else{
+      const queue=ensureMaxPostQueue();
+      const item=queue.find(p=>p&&p.id===id);
+      if(!item) throw new Error('Пост не найден');
+      if(!(item.text||'').trim()) throw new Error('Пустой текст');
+      item.status='draft';
+      item.error='';
+      await persistMaxSettingsImmediate();
+    }
+    const bot=state.marketingMax&&state.marketingMax.bot;
+    if(!bot||!bot.token||!bot.chatId) throw new Error('Сначала сохраните токен и chat_id MAX');
+    if(!await ensureArmadaApiToken({})) throw new Error('Нет сессии API — перелогиньтесь');
+    const queued=ensureMaxPostQueue().find(p=>p&&p.id===id);
+    const sendText=String((queued&&queued.text)||'');
+    setSocialNotice('Публикация в MAX…', false);
+    const r=await marketingMaxPublishPost(id, sendText);
+    const queue=ensureMaxPostQueue();
+    const item=queue.find(p=>p&&p.id===id);
+    if(item){
+      item.status='published';
+      item.publishedAt=new Date().toISOString();
+      item.maxMessageId=r.messageId?String(r.messageId):'';
+      item.error='';
+      item.updatedAt=item.publishedAt;
+      try{ await persistMaxSettingsImmediate(); }catch(_){ /* сервер уже опубликовал */ }
+    }
+    const okMsg=r.messageId?('Опубликовано в канал · '+r.messageId):(r.already?'Уже был опубликован':'Опубликовано в канал');
+    setSocialNotice(okMsg, false);
+    clearMaxPostEditorForm();
+    if(typeof rerender==='function') rerender();
+  }catch(e){
+    const msg=String(e.message||e);
+    setSocialNotice(msg, true);
+    setMaxPostEditorStatus(msg, true);
+    alert(msg);
+  }
+}
+async function cancelMaxPost(postId, rerender){
+  if(!isSuperAdmin()) return;
+  const queue=ensureMaxPostQueue();
+  const item=queue.find(p=>p&&p.id===postId);
+  if(!item) return;
+  if(item.status==='published'){ setMaxPostEditorStatus('Опубликованный пост из канала не удаляется здесь', true); return; }
+  item.status='cancelled';
+  item.updatedAt=new Date().toISOString();
+  try{
+    await persistMaxSettingsImmediate();
+    setMaxPostEditorStatus('Пост отменён');
+    if(typeof rerender==='function') rerender();
+  }catch(e){ setMaxPostEditorStatus(String(e.message||e), true); }
+}
+function wireMaxPostEditorControls(rerender){
+  $('max-post-insert-tpl')&&($('max-post-insert-tpl').onclick=()=>{
+    const tid=(($('max-post-template')||{}).value||'');
+    const tpl=MAX_POST_TEMPLATES.find(t=>t.id===tid)||MAX_POST_TEMPLATES[0];
+    if(!tpl) return;
+    if($('max-post-title')) $('max-post-title').value=tpl.title.replace(/^\d+\.\s*/,'');
+    if($('max-post-text')) $('max-post-text').value=tpl.text;
+    setMaxPostEditorStatus('Шаблон вставлен — можно править и опубликовать');
+  });
+  $('max-post-clear')&&($('max-post-clear').onclick=()=>{ clearMaxPostEditorForm(); setMaxPostEditorStatus('Форма очищена'); });
+  $('max-post-save-draft')&&($('max-post-save-draft').onclick=()=>{ saveMaxPostDraft(rerender); });
+  $('max-post-schedule')&&($('max-post-schedule').onclick=()=>{ scheduleMaxPost(rerender); });
+  $('max-post-publish')&&($('max-post-publish').onclick=()=>{ publishMaxPostNow(null, rerender); });
+  document.querySelectorAll('.max-post-edit').forEach(btn=>{
+    btn.onclick=()=>loadMaxPostIntoEditor(btn.getAttribute('data-id'));
+  });
+  document.querySelectorAll('.max-post-publish-now').forEach(btn=>{
+    btn.onclick=()=>publishMaxPostNow(btn.getAttribute('data-id'), rerender);
+  });
+  document.querySelectorAll('.max-post-cancel').forEach(btn=>{
+    btn.onclick=()=>{
+      if(!confirm('Отменить этот пост в очереди?')) return;
+      cancelMaxPost(btn.getAttribute('data-id'), rerender);
+    };
+  });
+}
+function wireMarketingMaxControls(rerender){
+  const setMaxStatus=(msg,isErr)=>setMaxBotStatus(msg,isErr);
+  const tokInp=$('max-bot-token');
+  if(tokInp&&!tokInp.dataset.maxTokWire){
+    tokInp.dataset.maxTokWire='1';
+    tokInp.addEventListener('input', updateMaxBotTokenPasteHint);
+    tokInp.addEventListener('paste', ()=>{ setTimeout(updateMaxBotTokenPasteHint, 0); });
+  }
+  updateMaxBotTokenPasteHint();
+  $('max-bot-save')&&($('max-bot-save').onclick=()=>{ saveMaxBotSettingsFromForm(rerender).catch(e=>{ setMaxBotStatus(String(e.message||e), true); alert(String(e.message||e)); }); });
+  $('max-bot-discover')&&($('max-bot-discover').onclick=async()=>{
+    if(!isSuperAdmin()){ alert('Доступно только супер-админу'); return; }
+    if(typeof marketingMaxDiscoverChat!=='function'){ setMaxStatus('API недоступен', true); return; }
+    const btn=$('max-bot-discover');
+    const prevLabel=btn?btn.textContent:'';
+    if(btn){ btn.disabled=true; btn.textContent='Ищем…'; }
+    setMaxStatus('Сохраняю токен и спрашиваю MAX…');
+    try{
+      const saved=await saveMaxBotSettingsFromForm(null);
+      if(!saved) return;
+      if(!await ensureArmadaApiToken({})) throw new Error('Нет сессии API — перелогиньтесь в админку');
+      const r=await marketingMaxDiscoverChat();
+      const chats=Array.isArray(r.chats)?r.chats:[];
+      if(!chats.length){
+        setMaxStatus(r.hint||'chat_id не найден. Добавьте бота админом канала и повторите.', true);
+        return;
+      }
+      const pick=String(r.suggestedChatId||chats[0].chatId||'');
+      const inp=$('max-bot-chat-id');
+      if(inp&&pick) inp.value=pick;
+      if(state.marketingMax&&state.marketingMax.bot) state.marketingMax.bot.chatId=pick;
+      await persistMaxSettingsImmediate();
+      const lines=chats.slice(0,8).map(c=>{
+        const mark=c.isChannel?'канал':(c.types&&c.types[0])||'чат';
+        return `${c.chatId}${c.title?(' · '+c.title):''} (${mark})`;
+      });
+      setMaxStatus(`Найдено: ${lines.join('; ')}. В поле подставлен ${pick}. Сохраните и сделайте тестовый пост.`);
+      if(typeof rerender==='function') rerender();
+    }catch(e){
+      setMaxStatus(String(e.message||e), true);
+    }finally{
+      if(btn){ btn.disabled=false; btn.textContent=prevLabel||'Найти chat_id'; }
+    }
+  });
+  $('max-bot-test')&&($('max-bot-test').onclick=async()=>{
+    if(!isSuperAdmin()){ alert('Доступно только супер-админу'); return; }
+    if(typeof marketingMaxTestPost!=='function'){ setMaxStatus('API недоступен', true); return; }
+    const btn=$('max-bot-test');
+    const prevLabel=btn?btn.textContent:'';
+    if(btn){ btn.disabled=true; btn.textContent='Отправка…'; }
+    setMaxStatus('Сначала сохраняю настройки, потом тест…');
+    try{
+      const saved=await saveMaxBotSettingsFromForm(null);
+      if(!saved) return;
+      const mm=state.marketingMax&&state.marketingMax.bot;
+      if(!mm||!mm.token||!mm.chatId){
+        throw new Error('Нужны оба поля: токен бота и chat_id. Сначала «Найти chat_id», потом «Тестовый пост».');
+      }
+      if(!await ensureArmadaApiToken({})) throw new Error('Нет сессии API — перелогиньтесь в админку');
+      setMaxStatus('Отправка в MAX…');
+      const r=await marketingMaxTestPost();
+      setMaxStatus(r.messageId?('Опубликовано · messageId '+r.messageId):'Тест отправлен');
+      if(typeof rerender==='function') rerender();
+    }catch(e){
+      let msg=String(e.message||e);
+      if(/token и chat_id|На сервере нет/i.test(msg)) msg='На сервере пустой токен или chat_id. Сохраните оба поля (chat_id — через «Найти chat_id»).';
+      if(/chat not found/i.test(msg)) msg='MAX: Chat not found — неверный chat_id. Нажмите «Найти chat_id» (бот должен быть админом канала).';
+      setMaxStatus(msg, true);
+    }finally{
+      if(btn){ btn.disabled=false; btn.textContent=prevLabel||'Тестовый пост в канал'; }
+    }
+  });
+  $('max-bot-tick')&&($('max-bot-tick').onclick=async()=>{
+    if(typeof marketingMaxPublishScheduled!=='function'){ setMaxStatus('API недоступен', true); return; }
+    setMaxStatus('Проверка очереди…');
+    try{
+      const r=await marketingMaxPublishScheduled();
+      setMaxStatus(`Готово · опубликовано: ${r.published||0}, ошибок: ${r.failed||0}${r.skipped?(' · '+r.skipped):''}`);
+      if(typeof rerender==='function') rerender();
+    }catch(e){ setMaxStatus(String(e.message||e), true); }
+  });
+}
+function wireMarketingSocialRefs(rerender){
+  const setTg=(msg,err)=>{ const el=$('social-tg-status'); if(el){ el.textContent=msg||''; el.className=err?'hint err-hint':'hint ok'; } };
+  const setVk=(msg,err)=>{ const el=$('social-vk-status'); if(el){ el.textContent=msg||''; el.className=err?'hint err-hint':'hint ok'; } };
+  $('social-tg-save')&&($('social-tg-save').onclick=async()=>{
+    if(!isSuperAdmin()) return;
+    if(typeof migrateMarketingSocial==='function') migrateMarketingSocial();
+    state.marketingSocial.telegramChannelUrl=(($('social-tg-url')||{}).value||'').trim();
+    setTg('Сохранение…');
+    try{
+      if(typeof persistAdminPinImmediate==='function') await persistAdminPinImmediate();
+      else persist();
+      setTg('Сохранено');
+      if(typeof rerender==='function') rerender();
+    }catch(e){ setTg(String(e.message||e), true); }
+  });
+  $('social-vk-save')&&($('social-vk-save').onclick=async()=>{
+    if(!isSuperAdmin()) return;
+    if(typeof migrateMarketingSocial==='function') migrateMarketingSocial();
+    state.marketingSocial.vkGroupUrl=(($('social-vk-url')||{}).value||'').trim();
+    setVk('Сохранение…');
+    try{
+      if(typeof persistAdminPinImmediate==='function') await persistAdminPinImmediate();
+      else persist();
+      setVk('Сохранено');
+      if(typeof rerender==='function') rerender();
+    }catch(e){ setVk(String(e.message||e), true); }
+  });
+}
+let adminSocialTab='max';
+let adminSocialNotice=null;
+function setSocialNotice(msg,isErr){
+  adminSocialNotice=msg?{msg:String(msg), err:!!isErr}:null;
+  const el=$('social-notice');
+  if(!el) return;
+  el.hidden=!msg;
+  el.textContent=msg||'';
+  el.className='hint max-status-banner'+(isErr?' err-hint':' ok');
+}
+function ensureMaxAutoTick(){
+  if(window.__armadaMaxTick) return;
+  window.__armadaMaxTick=setInterval(async()=>{
+    try{
+      if(typeof isSuperAdmin!=='function'||!isSuperAdmin()) return;
+      if(typeof marketingMaxPublishScheduled!=='function') return;
+      const mm=state.marketingMax;
+      if(!mm||!mm.bot||!mm.bot.enabled||!mm.bot.token||!mm.bot.chatId) return;
+      const due=(mm.queue||[]).filter(p=>p&&p.status==='scheduled'&&p.scheduledAt&&new Date(p.scheduledAt).getTime()<=Date.now());
+      if(!due.length) return;
+      const r=await marketingMaxPublishScheduled();
+      if(r&&r.published){
+        const now=Date.now();
+        due.forEach(p=>{ if(new Date(p.scheduledAt).getTime()<=now){ p.status='published'; p.publishedAt=new Date().toISOString(); p.error=''; } });
+        setSocialNotice('В канал ушло отложенных: '+r.published, false);
+        if($('social-form')) renderAdminSocial();
+      }else if(r&&r.failed){
+        setSocialNotice('Отложенный пост не ушёл. В очереди будет текст ошибки.', true);
+        if($('social-form')) renderAdminSocial();
+      }
+    }catch(e){
+      setSocialNotice(String(e.message||e), true);
+    }
+  }, 20000);
+}
+function openAdminSocial(){
+  if(!isSuperAdmin()){ alert('Доступно только супер админу'); return; }
+  if(!['max','tg','vk','settings'].includes(adminSocialTab)) adminSocialTab='max';
+  ensureMaxAutoTick();
+  renderAdminSocial();
+  show('admin-social-screen');
+}
+function renderAdminSocial(){
+  const form=$('social-form');
+  if(!form) return;
+  const tab=adminSocialTab||'max';
+  const tabBtn=(id,label)=>`<button type="button" data-social-tab="${id}" class="${tab===id?'on':''}">${label}</button>`;
+  let body='';
+  if(tab==='max') body=marketingMaxPostsPanelHtml();
+  else if(tab==='tg') body=marketingSocialTelegramBlockHtml();
+  else if(tab==='vk') body=marketingSocialVkBlockHtml();
+  else body=marketingSocialSettingsPanelHtml();
+  form.innerHTML=`
+    <p class="cat-panel-hint">Промо-каналы. Входящие лиды — «Заявки на подключение»; перевозки — канбан «Входящие».</p>
+    <div class="cat-tabs" id="social-tabs" role="tablist" aria-label="Соцсети">
+      ${tabBtn('max','MAX')}
+      ${tabBtn('tg','Telegram')}
+      ${tabBtn('vk','VK')}
+      ${tabBtn('settings','Настройки')}
+    </div>
+    <p class="hint max-status-banner ${adminSocialNotice&&adminSocialNotice.err?'err-hint':'ok'}" id="social-notice" ${adminSocialNotice?'':'hidden'}>${esc(adminSocialNotice?adminSocialNotice.msg:'')}</p>
+    ${body}`;
+  $('social-back').onclick=()=>{ show('admin'); renderAdmin(); };
+  document.querySelectorAll('#social-tabs [data-social-tab]').forEach(btn=>{
+    btn.onclick=()=>{
+      adminSocialTab=btn.getAttribute('data-social-tab')||'max';
+      renderAdminSocial();
+    };
+  });
+  if(tab==='max'){
+    wireMaxPostEditorControls(renderAdminSocial);
+    $('max-bot-tick')&&($('max-bot-tick').onclick=async()=>{
+      if(typeof marketingMaxPublishScheduled!=='function'){ setMaxPostEditorStatus('API недоступен', true); return; }
+      setMaxPostEditorStatus('Отправка отложенных…');
+      try{
+        const r=await marketingMaxPublishScheduled();
+        setMaxPostEditorStatus(`Готово · опубликовано: ${r.published||0}, ошибок: ${r.failed||0}${r.skipped?(' · '+r.skipped):''}`);
+        renderAdminSocial();
+      }catch(e){ setMaxPostEditorStatus(String(e.message||e), true); }
+    });
+  }
+  if(tab==='settings'){
+    wireMarketingMaxControls(renderAdminSocial);
+    wireMarketingSocialRefs(renderAdminSocial);
+  }
+}
 function renderAdminActivity(){
   migrateAdmins();
   migrateCustomerPortalLeads();
@@ -871,16 +1709,15 @@ function renderAdminActivity(){
   const ops=(state.opsLog||[]).slice(0,25);
   const leads=typeof pendingCustomerPortalLeads==='function'?pendingCustomerPortalLeads():[];
   const transportLeads=typeof pendingTransportOrders==='function'?pendingTransportOrders():leads.filter(l=>l.kind==='transport');
-  const pilotLeads=typeof pendingPilotLeads==='function'?pendingPilotLeads():leads.filter(l=>l.kind==='pilot');
-  const portalLeads=typeof pendingPortalAccessLeads==='function'?pendingPortalAccessLeads():leads.filter(l=>l.kind==='portal');
+  const transportLeadFailures=transportLeads.filter(l=>!l.orderId);
   const admins=state.admins.slice().sort((a,b)=>(b.isSuper?1:0)-(a.isSuper?1:0) || String(a.name).localeCompare(String(b.name),'ru'));
   $('activity-form').innerHTML=`
-    <p class="cat-panel-hint">Видит только супер админ. Онлайн = активность за последние 1–2 мин.</p>
-    ${transportLeads.length?`<section class="form-section">
-      <h2 class="form-section-title">Заявки на транспорт · armada.sx</h2>
-      <p class="cat-panel-hint">С armada.sx → <a href="/order.html" target="_blank" rel="noopener">order.html</a>. Логист — <strong>ООО «Армада»</strong>, заказчик автоматически закрепляется в её справочнике, заявка попадает в общий список.</p>
+    <p class="cat-panel-hint">Супер-админ: онлайн, ключи API, администраторы. <strong>Соцсети</strong> (MAX, TG, VK) и заявки на подключение — отдельные вкладки. Онлайн = активность за 1–2 мин.</p>
+    ${transportLeadFailures.length?`<section class="form-section">
+      <h2 class="form-section-title">Transport · не создался заказ</h2>
+      <p class="cat-panel-hint">Обычно заявки с <a href="/order.html" target="_blank" rel="noopener">order.html</a> сразу во <strong>Заказы → канбан → Входящие</strong>. Здесь только ошибка (нет ООО «Армада» в справочнике и т.п.).</p>
       <div class="cat-list">
-        ${transportLeads.map(l=>{
+        ${transportLeadFailures.map(l=>{
           const vLabel=l.vehicleTypeId&&typeof custVehicleTypeLabel==='function'?custVehicleTypeLabel(l.vehicleTypeId):(l.vehicleTypeId||'—');
           const ord=l.orderId?(state.orders||[]).find(o=>o.id===l.orderId):null;
           const ordNum=ord&&ord.sequentialNumber?`№${ord.sequentialNumber}`:'';
@@ -903,46 +1740,6 @@ function renderAdminActivity(){
             </div>
           </div>`;
         }).join('')}
-      </div>
-    </section>`:''}
-    ${pilotLeads.length?`<section class="form-section">
-      <h2 class="form-section-title">Заявки на пилот 30 дней</h2>
-      <p class="cat-panel-hint">С <a href="/pilot.html" target="_blank" rel="noopener">pilot.html</a> — логист или перевозчик. Подключите кабинет и отметьте «Обработано».</p>
-      <div class="cat-list">
-        ${pilotLeads.map(l=>{
-          const roleLbl=l.pilotRole==='carrier'?'перевозчик':l.pilotRole==='logist'?'логист':(l.pilotRole||'—');
-          return `
-          <div class="item-card" data-lead-id="${esc(l.id)}">
-            <div class="item-top">
-              <div class="item-name">${esc(l.company)} · пилот · ${esc(roleLbl)}</div>
-              <span class="hint">${esc(typeof dateTime==='function'?dateTime(l.createdAt):l.createdAt)}</span>
-            </div>
-            <div class="hint">${esc(l.phone)}${l.contactName?` · ${esc(l.contactName)}`:''}${l.city?` · ${esc(l.city)}`:''}${l.fleetSize?` · ${esc(l.fleetSize)} маш.`:''}</div>
-            ${l.comment?`<div class="hint">${esc(l.comment)}</div>`:''}
-            <div class="row" style="margin-top:8px">
-              <button type="button" class="secondary lead-done-btn" data-lead-id="${esc(l.id)}">Обработано</button>
-            </div>
-          </div>`;
-        }).join('')}
-      </div>
-    </section>`:''}
-    ${portalLeads.length?`<section class="form-section">
-      <h2 class="form-section-title">Заявки заказчиков · портал</h2>
-      <p class="cat-panel-hint">С kp-zakaz.html — «Хочу отправлять грузы». Включите портал в карточке компании и выдайте PIN.</p>
-      <div class="cat-list">
-        ${portalLeads.map(l=>`
-          <div class="item-card" data-lead-id="${esc(l.id)}">
-            <div class="item-top">
-              <div class="item-name">${esc(l.company)}</div>
-              <span class="hint">${esc(typeof dateTime==='function'?dateTime(l.createdAt):l.createdAt)}</span>
-            </div>
-            <div class="hint">${esc(l.phone)}${l.inn?` · ИНН ${esc(l.inn)}`:''}${l.contactName?` · ${esc(l.contactName)}`:''}</div>
-            ${l.comment?`<div class="hint">${esc(l.comment)}</div>`:''}
-            ${l.carrierHint?`<div class="hint">Перевозчик: ${esc(l.carrierHint)}</div>`:''}
-            <div class="row" style="margin-top:8px">
-              <button type="button" class="secondary lead-done-btn" data-lead-id="${esc(l.id)}">Обработано</button>
-            </div>
-          </div>`).join('')}
       </div>
     </section>`:''}
     ${ops.length?`<section class="form-section">
@@ -1038,7 +1835,7 @@ function renderAdminActivity(){
           <option value="">— sandbox (локально) —</option>
           <option value="sbis" ${(state.settings&&state.settings.epdOperator)==='sbis'?'selected':''}>СБИС</option>
           <option value="kontur" ${(state.settings&&state.settings.epdOperator)==='kontur'?'selected':''}>Контур</option>
-          <option value="diadoc" ${(state.settings&&state.settings.epdOperator)==='diadoc'?'selected':''}>Диадoc</option>
+          <option value="diadoc" ${(state.settings&&state.settings.epdOperator)==='diadoc'?'selected':''}>Диадок</option>
         </select>
         <button type="button" class="primary" id="epd-operator-save" style="width:auto;flex:0 0 auto;padding:8px 12px">OK</button>
       </div>
@@ -1239,6 +2036,9 @@ function renderAdminActivity(){
     if(loginBy==='phone' && phone && state.admins.some((a,j)=>j!==i && a.loginBy==='phone' && adminLoginPhone(a)===phone)){
       alert('Этот телефон уже привязан к другому админу'); return;
     }
+    const prevPin=String(state.admins[i].pin||'').trim();
+    const prevPlainPins={};
+    if(state.admins[i].id) prevPlainPins['admin:'+state.admins[i].id]=prevPin;
     state.admins[i].pin=pin;
     state.admins[i].loginBy=loginBy;
     if(phone) state.admins[i].phone=phone;
@@ -1271,10 +2071,33 @@ function renderAdminActivity(){
     btn.disabled=true;
     btn.textContent='…';
     let saveResult={ ok:navigator.onLine!==false, offline:navigator.onLine===false };
-    if(typeof persistAdminPinImmediate==='function'){
-      saveResult=await persistAdminPinImmediate();
-    } else {
-      persist();
+    const isSelf=currentAdmin&&currentAdmin.id===state.admins[i].id;
+    if(isSelf && typeof armadaApiChangeAdminPin==='function' && prevPin && prevPin!==pin){
+      const ch=await armadaApiChangeAdminPin(prevPin, pin);
+      if(ch.ok){
+        saveResult={ ok:true };
+        persistLocalOnly();
+      } else {
+        state.admins[i].pin=prevPin;
+        saveResult={ ok:false, err:ch.error||'change_pin_failed' };
+      }
+    } else if(!isSelf && prevPin!==pin && typeof armadaApiSetAdminPin==='function'){
+      const setRes=await armadaApiSetAdminPin(state.admins[i].id, pin);
+      if(!setRes.ok){
+        state.admins[i].pin=prevPin;
+        saveResult={ ok:false, err:setRes.error||'set_pin_failed' };
+      } else {
+        saveResult={ ok:true };
+        persistLocalOnly();
+      }
+    }
+    if(saveResult.ok!==false){
+      if(typeof persistAdminPinImmediate==='function'){
+        const pr=await persistAdminPinImmediate(prevPlainPins);
+        if(!pr.ok) saveResult=pr;
+      } else {
+        persist();
+      }
     }
     btn.disabled=false;
     btn.textContent=prevText;
@@ -1282,7 +2105,11 @@ function renderAdminActivity(){
     if(saveResult.ok){
       flashAdmPinOk('Пин-код записан');
     } else {
-      flashAdmPinOk('Пин-код записан на этом устройстве, но не на сервере — проверьте интернет', true);
+      const errMsg=saveResult.err==='ignored_auth_fields'?(saveResult.message||'Сервер не принял изменение входа')
+        :saveResult.err==='forbidden'?'Недостаточно прав для PIN на сервере'
+        :saveResult.err==='invalid_old_pin'?'Неверный старый PIN на сервере'
+        :'Пин-код записан на этом устройстве, но не на сервере — проверьте интернет';
+      flashAdmPinOk(errMsg, true);
     }
   });
   document.querySelectorAll('[data-del-adm]').forEach(b=>b.onclick=()=>{
@@ -1296,18 +2123,8 @@ function renderAdminActivity(){
     state.admins=state.admins.filter(a=>a.id!==id);
     persist(); renderAdminActivity();
   });
-  document.querySelectorAll('.lead-open-order-btn').forEach(b=>b.onclick=()=>{
-    const id=b.dataset.orderId;
-    if(!id) return;
-    if(typeof openDetail==='function') openDetail(id);
-  });
-  document.querySelectorAll('.lead-done-btn').forEach(b=>b.onclick=()=>{
-    if(!isSuperAdmin()) return;
-    const id=b.dataset.leadId;
-    if(!id||typeof markCustomerPortalLeadDone!=='function') return;
-    markCustomerPortalLeadDone(id);
-    renderAdminActivity();
-  });
+  wireCustomerPortalLeadButtons($('activity-form'), renderAdminActivity);
+  updateAdminConnectLeadsBadge();
 }
 
 function openVehicleCard(vehicleId){
@@ -1400,7 +2217,9 @@ function openVehicleCard(vehicleId){
   const titleEl=$('veh-card-title');
   if(titleEl) titleEl.textContent=v.plate||'Авто';
   const box=$('vehicle-card-form');
+  const assignWarn=typeof vehicleAssignBlockHint==='function'?vehicleAssignBlockHint(v):'';
   box.innerHTML=`
+    ${assignWarn?`<p class="veh-assign-block-hint warn">${esc(assignWarn)}</p>`:''}
     <p class="cat-panel-hint">${esc([firm, v.makeModel, vehicleSpecText(v), vehicleCrewSummary(v)].filter(Boolean).join(' · ')||'Карточка автомобиля')}</p>
     <section class="form-section">
       <h2 class="form-section-title">Экипаж / водители</h2>
@@ -1417,7 +2236,7 @@ function openVehicleCard(vehicleId){
         <label class="svc-full">Скан СТС (PNG/JPG, до ${DOC_PHOTO_MAX_KB} КБ)
           <div class="doc-photo-row__box" style="margin-top:4px">
             ${docPhotoThumbHtml(v.stsPhoto,'СТС')}
-            <input type="file" accept="image/png,image/jpeg,image/webp" id="vc-sts-photo" />
+            ${typeof filePickInputHtml==='function'?filePickInputHtml('id="vc-sts-photo"'):'<input type="file" accept="image/png,image/jpeg,image/webp" id="vc-sts-photo" />'}
             ${v.stsPhoto?`<button type="button" class="secondary doc-photo-clear" id="vc-sts-clear" title="Удалить">×</button>`:''}
           </div>
         </label>
@@ -1428,8 +2247,11 @@ function openVehicleCard(vehicleId){
       <h2 class="form-section-title">Основные</h2>
       <div class="fin-grid">
         <label>Модель<input id="vc-model" value="${esc(v.makeModel||'')}" placeholder="ГАЗ Валдай" /></label>
-        <label>Тип кузова<select id="vc-body-type">${fleetBodyTypeOptionsHtml(v.bodyTypeId)}</select></label>
-        <label>Грузоподъёмность, т<input id="vc-payload" inputmode="decimal" value="${v.payloadTons??''}" placeholder="5" /></label>
+        <label class="required" for="vc-body-type">Тип кузова</label><select id="vc-body-type">${fleetBodyTypeOptionsHtml(v.bodyTypeId)}</select>
+        <label class="required" for="vc-payload">Грузоподъёмность, т</label><input id="vc-payload" inputmode="decimal" value="${v.payloadTons??''}" placeholder="5" />
+        <label class="required" for="vc-l">Длина кузова, м</label><input id="vc-l" inputmode="decimal" value="${v.bodyLengthM??''}" placeholder="6" />
+        <label class="required" for="vc-w">Ширина кузова, м</label><input id="vc-w" inputmode="decimal" value="${v.bodyWidthM??''}" placeholder="2.4" />
+        <label class="required" for="vc-h">Высота кузова, м</label><input id="vc-h" inputmode="decimal" value="${v.bodyHeightM??''}" placeholder="2.2" />
         <label class="check vc-trailer-check"><input type="checkbox" id="vc-trailer" ${v.hasTrailer?'checked':''}/> С прицепом</label>
         <label id="vc-trailer-plate-wrap" class="svc-full"${v.hasTrailer?'':' hidden'}>Госномер прицепа<input id="vc-trailer-plate" value="${esc(v.trailerPlate||'')}" placeholder="А123BC77" /></label>
         <label>Одометр сейчас<input id="vc-odo" inputmode="numeric" value="${v.currentOdometer??''}" placeholder="км" /></label>
@@ -1516,12 +2338,17 @@ function openVehicleCard(vehicleId){
     v.makeModel=(($('vc-model')||{}).value||'').trim();
     v.bodyTypeId=(($('vc-body-type')||{}).value||'').trim()||null;
     v.payloadTons=numOrNull(($('vc-payload')||{}).value);
+    v.bodyLengthM=numOrNull(($('vc-l')||{}).value);
+    v.bodyWidthM=numOrNull(($('vc-w')||{}).value);
+    v.bodyHeightM=numOrNull(($('vc-h')||{}).value);
     const trailer=readFleetTrailerFromDom($('vc-trailer'), $('vc-trailer-plate'));
     if(!validateFleetTrailer(trailer)) return;
     v.hasTrailer=trailer.hasTrailer;
     v.trailerPlate=trailer.trailerPlate;
     v.currentOdometer=numOrNull(($('vc-odo')||{}).value);
-    state.vehicles[vi]=normalizeFleetVehicle(Object.assign({}, v));
+    const draft=normalizeFleetVehicle(Object.assign({}, v));
+    if(!assertFleetVehicleRequired(draft, fleetVehicleFieldIdsCard(), box)) return;
+    state.vehicles[vi]=draft;
     bumpDataEpoch('veh-card-head');
     persist();
     openVehicleCard(v.id);
@@ -1648,13 +2475,14 @@ function openVehicleCard(vehicleId){
     openVehicleCard(v.id);
   };
 }
-function flashDriverCardOk(msg){
+function flashDriverCardOk(msg, isErr){
   const el=$('drv-card-ok');
   if(!el) return;
   el.textContent=msg||'Сохранено';
+  el.classList.toggle('toast-err', !!isErr);
   el.style.display='block';
   clearTimeout(flashDriverCardOk._t);
-  flashDriverCardOk._t=setTimeout(()=>{ if(el) el.style.display='none'; }, 3200);
+  flashDriverCardOk._t=setTimeout(()=>{ if(el){ el.style.display='none'; el.classList.remove('toast-err'); } }, 3200);
 }
 function updateDriverCardWarn(d){
   const box=$('driver-card-form');
@@ -1715,7 +2543,7 @@ function driverCardPhotoField(label, existing, inputId, clearId){
   return `<label class="svc-full">${esc(label)}
     <div class="doc-photo-row__box drv-card-photo-box">
       ${docPhotoThumbHtml(existing, label)}
-      <input type="file" accept="image/png,image/jpeg,image/webp" id="${inputId}" />
+      ${typeof filePickInputHtml==='function'?filePickInputHtml(`id="${inputId}"`):`<input type="file" accept="image/png,image/jpeg,image/webp" id="${inputId}" />`}
       ${docPhotoOrNull(existing)?`<button type="button" class="secondary doc-photo-clear" id="${clearId}" title="Удалить">×</button>`:''}
     </div>
   </label>`;
@@ -1802,16 +2630,30 @@ function openDriverCard(driverKey){
   if(saveBtn){
     saveBtn.disabled=false;
     saveBtn.textContent='Сохранить';
-    saveBtn.onclick=()=>{
+    saveBtn.onclick=async ()=>{
+      const prevPin=String(d.pin||'').trim();
       if(!readDriverCardFieldsInto(d)) return;
+      const prevPlainPins={};
+      if(d.id) prevPlainPins['driver:'+d.id]=prevPin;
       saveBtn.disabled=true;
       saveBtn.textContent='Сохранение…';
       bumpDataEpoch('drv-card-save');
-      persist();
+      let saveResult={ ok:navigator.onLine!==false, offline:navigator.onLine===false };
+      if(typeof persistDriverCardImmediate==='function'){
+        saveResult=await persistDriverCardImmediate(prevPlainPins);
+      } else {
+        persist();
+        saveResult={ ok:true };
+      }
       updateDriverCardWarn(d);
-      flashDriverCardOk('Водитель сохранён');
+      if(saveResult.ok){
+        flashDriverCardOk('Водитель сохранён');
+        saveBtn.textContent='Сохранено ✓';
+      } else {
+        flashDriverCardOk(saveResult.message||'Сервер не принял изменение PIN водителя', true);
+        saveBtn.textContent='Сохранить';
+      }
       saveBtn.disabled=false;
-      saveBtn.textContent='Сохранено ✓';
       setTimeout(()=>{ if(saveBtn) saveBtn.textContent='Сохранить'; }, 2000);
     };
   }
@@ -2025,23 +2867,56 @@ function adminOrderPickHtml(o){
     <input type="checkbox" class="admin-order-pick" data-id="${esc(o.id)}"${on?' checked':''} />
   </label>`;
 }
+function adminFleetVehicleAssignHintsHtml(vehicles){
+  const lines=(vehicles||[]).map(v=>{
+    if(!v||!v.plate) return '';
+    const block=typeof vehicleAssignBlockHint==='function'?vehicleAssignBlockHint(v):'';
+    const dim=typeof vehicleAssignDimensionWarnHint==='function'?vehicleAssignDimensionWarnHint(v):'';
+    const parts=[block,dim?('⚠ '+dim):''].filter(Boolean);
+    if(!parts.length) return '';
+    return `<p class="veh-assign-block-hint"><b>${esc(v.plate)}</b> — ${esc(parts.join(' · '))}</p>`;
+  }).filter(Boolean).join('');
+  return lines?`<div class="veh-assign-hints">${lines}</div>`:'';
+}
 function adminFleetPlateOptionsForOrder(o, firmId, opts){
   opts=opts||{};
   const booked=String(opts.bookedPlate||'').trim();
+  const currentPlate=String(opts.currentPlate||'').trim();
+  const pickPlate=currentPlate||booked;
   const all=firmId?fleetVehiclesForCompany(firmId):[];
   const ok=all.filter(v=>vehicleFitsOrder(v,o));
-  const list=ok.length?ok:all;
+  let list=ok.length?ok:all;
+  if(pickPlate){
+    const pinned=all.find(v=>v.plate===pickPlate);
+    if(pinned&&!list.some(v=>v.plate===pickPlate)) list=[pinned,...list];
+  }
+  const incomplete=all.filter(v=>{
+    const block=typeof vehicleMissingAssignBlockParams==='function'?vehicleMissingAssignBlockParams(v).length:0;
+    const dim=typeof vehicleHasMissingDimensions==='function'&&vehicleHasMissingDimensions(v);
+    return block||dim;
+  });
+  const hintHtml=adminFleetVehicleAssignHintsHtml(incomplete);
   const html=list.length?list.map(v=>{
+    const blockMiss=typeof vehicleMissingAssignBlockParams==='function'?vehicleMissingAssignBlockParams(v):[];
+    const dimWarn=typeof vehicleAssignDimensionWarnHint==='function'?vehicleAssignDimensionWarnHint(v):'';
+    const sel=pickPlate&&v.plate===pickPlate?' selected':'';
+    const bookTag=booked&&v.plate===booked&&!currentPlate?' · бронь':'';
+    const spec=vehicleSpecText(v)?' · '+esc(vehicleSpecText(v)):'';
+    if(blockMiss.length){
+      const block=typeof vehicleAssignBlockHint==='function'?vehicleAssignBlockHint(v):('⚠ нет обязательных параметров: '+blockMiss.join(', '));
+      return `<option value="${esc(v.plate)}" disabled title="${esc(block)}">${esc(v.plate)}${spec} · ${esc(block)}</option>`;
+    }
     const fits=vehicleFitsOrder(v,o);
-    const warn=!fits?' · ⚠ не по требованиям':'';
-    const sel=booked&&v.plate===booked?' selected':'';
-    const bookTag=booked&&v.plate===booked?' · бронь':'';
-    return `<option value="${esc(v.plate)}"${sel}>${esc(v.plate)}${vehicleSpecText(v)?' · '+esc(vehicleSpecText(v)):''}${bookTag}${warn}</option>`;
+    const warnBits=[];
+    if(dimWarn) warnBits.push(dimWarn);
+    if(!fits) warnBits.push('не по требованиям');
+    const warn=warnBits.length?' · ⚠ '+esc(warnBits.join(' · ')):'';
+    return `<option value="${esc(v.plate)}"${sel}${!fits?' data-fleet-mismatch="1"':''}>${esc(v.plate)}${spec}${bookTag}${warn}</option>`;
   }).join(''):'';
   const emptyHint=all.length
     ?(ok.length?'':`В парке ${all.length} авто — по фильтру 0, показаны все. Заполните тоннаж/тип кузова в справочнике или назначьте вручную.`)
     :'В парке нет авто — Справочники → Авто (госномер, тоннаж, тип кузова).';
-  return {allCount:all.length, okCount:ok.length, html, emptyHint};
+  return {allCount:all.length, okCount:ok.length, html, emptyHint, hintHtml};
 }
 function adminOrdersBulkBarHtml(){
   const n=adminOrderPickCount();
@@ -2095,6 +2970,11 @@ function applyOwnFleetAssignment(o, driver, plate, firmId, opts){
   }
   const veh=fleetVehiclesForCompany(firmId).find(v=>v.plate===plate);
   if(!veh) return {ok:false, message:`Авто ${plate} не из парка фирмы`};
+  const miss=typeof vehicleMissingAssignBlockParams==='function'?vehicleMissingAssignBlockParams(veh):[];
+  if(miss.length){
+    const hint=typeof vehicleAssignBlockHint==='function'?vehicleAssignBlockHint(veh):vehicleRequiredParamsMessage(miss);
+    return {ok:false, message:`${plate} — ${hint}`};
+  }
   if(!vehicleFitsOrder(veh, o)){
     const soft=opts&&opts.allowMismatch;
     if(!soft && typeof confirm==='function'){
@@ -2135,6 +3015,9 @@ function applyOwnFleetAssignment(o, driver, plate, firmId, opts){
 }
 function commitOwnFleetAssignment(o){
   if(!o) return;
+  if(typeof ensureEtrnForOrder==='function'&&typeof orderTransportDocUsesEtrn==='function'&&orderTransportDocUsesEtrn(o)){
+    ensureEtrnForOrder(o, {silent:true});
+  }
   upsertOrder(o);
   if(typeof persistOrderAssignmentImmediate==='function'){
     persistOrderAssignmentImmediate().then(r=>{
@@ -2181,6 +3064,11 @@ function adminBulkAssignSelectedOrders(){
     } else skipped.push(o.sequentialNumber);
   });
   if(assigned){
+    okOrders.forEach(o=>{
+      if(typeof ensureEtrnForOrder==='function'&&typeof orderTransportDocUsesEtrn==='function'&&orderTransportDocUsesEtrn(o)){
+        ensureEtrnForOrder(o, {silent:true});
+      }
+    });
     if(typeof persistOrderAssignmentImmediate==='function') persistOrderAssignmentImmediate();
     else if(typeof persist==='function') persist();
   }
@@ -2245,7 +3133,8 @@ function orderStatusClass(o){
   if(looksClosedOrder(o)) return 'closed';
   if(typeof isLogistInboxOrder==='function' && isLogistInboxOrder(o)) return 'inbox';
   if(o.onExchange && o.startOdometer==null) return 'exchange';
-  if(o.startOdometer!=null || o.departOdometer!=null) return 'progress';
+  if(o.startOdometer!=null||o.arrivedAt) return 'progress';
+  if(o.departOdometer!=null) return 'progress';
   return '';
 }
 function adminOrderCardHtml(o){
@@ -2276,14 +3165,16 @@ function adminOrderCardHtml(o){
       ?`<button type="button" class="secondary cancel-order" data-id="${o.id}">Отменить</button>`:''
   ].filter(Boolean).join('');
   const etrnBadge=typeof orderEtrnBadgeHtml==='function'?orderEtrnBadgeHtml(o):'';
+  const etrnCheck=typeof orderEtrnChecklistHtml==='function'?orderEtrnChecklistHtml(o):'';
   const etrnAct=typeof adminOrderEtrnActionHtml==='function'?adminOrderEtrnActionHtml(o):'';
   return `<div class="order-card${onEx?' exchange-mark':''}" data-order-card="${esc(o.id)}">
     <div class="order-card-head">
       ${adminOrderPickHtml(o)}
-      <h3>Заказ №${o.sequentialNumber} · ${esc(orderDayLabel(o.dayNumber))}</h3>
+      <h3>Заказ №${o.sequentialNumber}${esc(orderDayLabelSuffix(o.dayNumber))}</h3>
       ${etrnBadge}
     </div>
     <div class="order-status ${stCls}">${esc(st)}</div>
+    ${etrnCheck}
     <p>${esc(dateTime(o.createdAt))}</p>
     ${ownerLine}
     ${o.ownCompanyName?`<p style="color:var(--text);font-weight:600">От: ${esc(o.ownCompanyName)}</p>`:''}
@@ -2765,6 +3656,7 @@ function openClaimExchange(id){
             <select id="claim-plate">${platePack.html||`<option value="">— нет авто в парке —</option>`}</select>
           </div>
         </div>
+        ${platePack.hintHtml||''}
         <div class="hint">${platePack.allCount?(platePack.okCount?`В парке ${platePack.allCount}, подходит: ${platePack.okCount}.`:platePack.emptyHint):'В вашей фирме нет авто — добавьте в Справочниках с тоннажем и габаритами.'}</div>
         <div id="claim-drv-docs-warn" hidden></div>
       </div>
@@ -2802,6 +3694,11 @@ function confirmClaimExchangeAfterGuard(o){
   }
   const veh=fleetVehiclesForCompany(myCo.id).find(v=>v.plate===plate);
   if(!veh){ $('claim-error').textContent='Авто не из вашего парка'; return; }
+  const miss=typeof vehicleMissingAssignBlockParams==='function'?vehicleMissingAssignBlockParams(veh):[];
+  if(miss.length){
+    $('claim-error').textContent=typeof vehicleAssignBlockHint==='function'?vehicleAssignBlockHint(veh):vehicleRequiredParamsMessage(miss);
+    return;
+  }
   if(!vehicleFitsOrder(veh, o)){ $('claim-error').textContent='Авто не подходит по требованиям заявки'; return; }
   const drvRec=findDriverRecord(driver, myCo.id);
   if(typeof confirmIfDriverDocsIncomplete==='function'&&!confirmIfDriverDocsIncomplete(drvRec, driver)) return;
@@ -2885,7 +3782,7 @@ function renderAdminExchangeBoard(orders){
     return `<div class="ex-card">
       <div class="order-card-head">
         ${adminOrderPickHtml(o)}
-        <h3>№${o.sequentialNumber} · ${esc(orderDayLabel(o.dayNumber))}</h3>
+        <h3>№${o.sequentialNumber}${esc(orderDayLabelSuffix(o.dayNumber))}</h3>
       </div>
       <p>${esc(dateTime(o.createdAt))}</p>
       <p>Заказчик: <strong style="color:var(--text)">${esc(o.ownCompanyName||'—')}</strong>${mine?' (вы)':''}</p>
@@ -2899,6 +3796,7 @@ function renderAdminExchangeBoard(orders){
           <select id="ex-drv-${o.id}">${drvOpts||`<option value="">— нет водителей —</option>`}</select>
           <label for="ex-plate-${o.id}">Авто под требования</label>
           <select id="ex-plate-${o.id}">${plateOpts||`<option value="">— нет авто в парке —</option>`}</select>
+          ${platePack.hintHtml||''}
           ${platePack.okCount===0&&platePack.allCount?`<p class="hint">${esc(platePack.emptyHint)}</p>`:''}
           <div class="ex-actions">
             <button type="button" class="primary ex-assign" data-id="${o.id}">Назначить</button>
@@ -2960,10 +3858,11 @@ function renderAdminInboxBoard(orders){
     const firmId=usesMyFleet&&typeof adminFleetCompanyId==='function'?adminFleetCompanyId(o):(myCo&&myCo.id);
     const drvList=firmId?fleetDriversForCompany(firmId):[];
     const bookedPlate=String(o.bookedPlate||'').trim();
-    const platePack=adminFleetPlateOptionsForOrder(o, firmId, {bookedPlate});
+    const curPlate=String(o.vehiclePlate||'').trim();
+    const platePack=adminFleetPlateOptionsForOrder(o, firmId, {bookedPlate, currentPlate:curPlate});
     const vehList=(firmId?fleetVehiclesForCompany(firmId):[]).filter(v=>vehicleFitsOrder(v,o));
     const freeList=typeof freeOwnFleetForOrder==='function'?freeOwnFleetForOrder(o):vehList;
-    const drvOpts=drvList.map(d=>`<option value="${esc(d.name)}">${esc(d.name)}</option>`).join('');
+    const drvOpts=`<option value="" selected>— выберите водителя —</option>`+drvList.map(d=>`<option value="${esc(d.name)}">${esc(d.name)}</option>`).join('');
     const plateOpts=platePack.html;
     const margin=typeof logistMarginLine==='function'?logistMarginLine(o):'';
     const reqBook=typeof isBookingRequested==='function' && isBookingRequested(o);
@@ -2978,7 +3877,7 @@ function renderAdminInboxBoard(orders){
     return `<div class="ex-card">
       <div class="order-card-head">
         ${adminOrderPickHtml(o)}
-        <h3>№${o.sequentialNumber} · ${esc(orderDayLabel(o.dayNumber))}</h3>
+        <h3>№${o.sequentialNumber}${esc(orderDayLabelSuffix(o.dayNumber))}</h3>
       </div>
       <p>${esc(dateTime(o.createdAt))}</p>
       <p>Заказчик: <strong style="color:var(--text)">${esc(o.customer||'—')}</strong></p>
@@ -3007,6 +3906,7 @@ function renderAdminInboxBoard(orders){
         <select id="ex-drv-${o.id}">${drvOpts||`<option value="">— нет водителей —</option>`}</select>
         <label for="ex-plate-${o.id}">Авто</label>
         <select id="ex-plate-${o.id}">${plateOpts||`<option value="">— нет авто в парке —</option>`}</select>
+        ${platePack.hintHtml||''}
         ${platePack.okCount===0&&platePack.allCount?`<p class="hint">${esc(platePack.emptyHint)}</p>`:''}
         <div class="park-ex-cta">
           <button type="button" class="${freeList.length||!dispatcher?'primary':'secondary'} ex-assign" data-id="${o.id}">Назначить</button>
@@ -3115,25 +4015,24 @@ function adminKanbanAssignControlsHtml(o, opts){
   const firmId=typeof adminFleetCompanyId==='function'?adminFleetCompanyId(o):(myCo&&myCo.id);
   if(!firmId) return '';
   const drvList=fleetDriversForCompany(firmId);
-  const vehList=(fleetVehiclesForCompany(firmId)||[]).filter(v=>vehicleFitsOrder(v,o));
-  if(!drvList.length||!vehList.length) return '';
+  const allVeh=fleetVehiclesForCompany(firmId)||[];
   const bookedPlate=String(o.bookedPlate||'').trim();
-  const curDrv=String(o.driverName||'').trim();
   const curPlate=String(o.vehiclePlate||'').trim();
-  const drvOpts=drvList.map(d=>{
+  const platePack=adminFleetPlateOptionsForOrder(o, firmId, {bookedPlate, currentPlate:curPlate});
+  if(!drvList.length||!allVeh.length) return '';
+  const curDrv=String(o.driverName||'').trim();
+  const drvSelected=reassign&&curDrv&&drvList.some(d=>samePersonName(d.name, curDrv));
+  const drvOpts=`<option value=""${!drvSelected?' selected':''}>— выберите водителя —</option>`+drvList.map(d=>{
     const sel=reassign&&curDrv&&samePersonName(d.name, curDrv)?' selected':'';
     return `<option value="${esc(d.name)}"${sel}>${esc(d.name)}</option>`;
-  }).join('');
-  const plateOpts=vehList.map(v=>{
-    const sel=(bookedPlate&&v.plate===bookedPlate)||(reassign&&curPlate&&curPlate!=='—'&&v.plate===curPlate)?' selected':'';
-    return `<option value="${esc(v.plate)}"${sel}>${esc(v.plate)}</option>`;
   }).join('');
   const btnLabel=reassign?'Сохранить назначение':'Назначить';
   return `<div class="kanban-assign-box ex-assign-box">
     <label for="ex-drv-${o.id}">Водитель</label>
     <select id="ex-drv-${o.id}">${drvOpts}</select>
     <label for="ex-plate-${o.id}">ТС</label>
-    <select id="ex-plate-${o.id}">${plateOpts}</select>
+    <select id="ex-plate-${o.id}"><option value="">— авто —</option>${platePack.html||''}</select>
+    ${platePack.hintHtml||''}
     <button type="button" class="primary ex-assign" data-id="${esc(o.id)}">${btnLabel}</button>
   </div>`;
 }
@@ -3162,6 +4061,7 @@ function adminKanbanCardHtml(o){
     badges.push('<span class="kanban-badge">Срочно</span>');
   }
   const etrn=typeof orderEtrnBadgeHtml==='function'?orderEtrnBadgeHtml(o):'';
+  const etrnCheck=typeof orderEtrnChecklistHtml==='function'?orderEtrnChecklistHtml(o,{compact:true}):'';
   const price=o.priceForClient?`${fmt(o.priceForClient)} ₽`:o.pricePending?'цена уточняется':'';
   const when=o.vehicleAt&&typeof formatRuDateTimeAt==='function'?formatRuDateTimeAt(o.vehicleAt):dateTime(o.createdAt);
   const drv=(o.driverName&&o.driverName!=='Диспетчер'&&o.driverName!=='Биржа'&&o.driverName!=='—')
@@ -3187,6 +4087,7 @@ function adminKanbanCardHtml(o){
     <p class="kanban-card-route">${esc(routeText(o))}</p>
     <p class="kanban-card-meta">${esc(when)}${price?` · ${esc(price)}`:''}</p>
     ${drv}
+    ${etrnCheck}
     ${badges.length||etrn?`<div class="kanban-card-badges">${badges.join('')}${etrn||''}</div>`:''}
     ${adminKanbanAssignBlockHtml(o)}
     ${adminKanbanReassignBlockHtml(o)}
@@ -3219,7 +4120,7 @@ function renderAdminKanbanBoard(orders){
     </section>`;
   }).join('');
   return `<div class="orders-board-head">
-    <p class="cat-panel-hint">Канбан: «Входящие» — назначьте водителя и ТС. «Подписать T2» загорается после T1 грузоотправителя. «Карточка» — детали и ставки.</p>
+    <p class="cat-panel-hint">Канбан: T1 не блокирует выезд со стоянки. T1+T2 — до выезда с грузом с погрузки. T3 — грузополучатель, T4 — выдача перевозчиком.</p>
   </div>
   <div class="kanban-board-wrap"><div class="kanban-board">${cols}</div></div>`;
 }
@@ -3271,6 +4172,7 @@ function wireAdminOrderListActions(orders){
   wireAdminOrderDeleteUi(orders||[]);
   if(typeof wireAdminOrderEtrnCardButtons==='function') wireAdminOrderEtrnCardButtons($('admin-list'));
 }
+let renderAdminDebounceTimer;
 function renderAdminDebounced(){
   clearTimeout(renderAdminDebounceTimer);
   renderAdminDebounceTimer=setTimeout(()=>renderAdmin(), 100);
@@ -3340,7 +4242,7 @@ function renderAdmin(){
       : (state.adminFilter||'all')==='etrn-wait-customer'
       ? 'Нет заказов, где ждём подпись заказчика (T1).'
       : (state.adminFilter||'all')==='etrn-wait-driver'
-      ? 'Нет заказов, где ждём подпись водителя (T3/T4).'
+      ? 'Нет заказов, где ждём подпись водителя/перевозчика (T2/T4).'
       : isSuperAdmin()
       ? 'Пока нет заявок в выбранном кабинете. Переключите «Все кабинеты» или фирму с заказами (например «ИП Нечаев»).'
       : 'Пока нет заявок. Пройдите чеклист в «Настройки кабинета» и нажмите + Заказ';
@@ -3425,13 +4327,13 @@ function renderAdmin(){
   const calHtml=adminOrdersCalHtml(allGroups);
   const filtersHtml=adminOrdersFiltersHtml(allGroups);
   const statsHtml=`<div class="orders-board-head">
-    <p class="cat-panel-hint">${headHint}${exCount?` На бирже: <strong>${exCount}</strong>.`:''}${etrnSignCount?` ЭТrН · ваша подпись: <strong>${etrnSignCount}</strong>.`:''}</p>
+    <p class="cat-panel-hint">${headHint}${exCount?` На бирже: <strong>${exCount}</strong>.`:''}${etrnSignCount?` ЭТрН · ваша подпись: <strong>${etrnSignCount}</strong>.`:''}</p>
     ${adminOrdersBulkBarHtml()}
     <div class="board-metrics">
       <div class="m"><span>Заказы</span><b>${periodTot.count}</b></div>
       <div class="m"><span>Выручка</span><b>${fmt(periodTot.revenue)} ₽</b></div>
       <div class="m"><span>ЗП</span><b>${fmt(periodTot.pay)} ₽</b></div>
-      ${etrnSignCount?`<div class="m"><span>ЭТrН T2</span><b class="warn">${etrnSignCount}</b></div>`:''}
+      ${etrnSignCount?`<div class="m"><span>ЭТрН T2</span><b class="warn">${etrnSignCount}</b></div>`:''}
     </div>
   </div>`;
   const emptyMsg=(cal.driver||cal.plate)?'Нет заявок по фильтру водителя/ТС'
@@ -3934,8 +4836,8 @@ function saveDispatcherOrderAfterBillingGuard(seqNo, ownCo, orderSpaceId, mode, 
     reqLengthM:reqs.reqLengthM,
     reqWidthM:reqs.reqWidthM,
     reqHeightM:reqs.reqHeightM,
-    cargoDescription:cargo.cargoDescription||'',
-    cargoKind:cargo.cargoKind||null,
+    cargoDescription:(draft&&draft.cargoDescription)||'',
+    cargoKind:(draft&&draft.cargoKind)||null,
     tripMode:draft&&draft.tripMode||(quote&&quote.tripMode)||null,
     routeKm:draft&&draft.routeKm||(quote&&quote.routeKm)||null,
     estimateKm:draft&&draft.routeKm||(quote&&quote.routeKm)||null,
@@ -3988,6 +4890,89 @@ function adminDetailDisplayPlate(o){
   if(!p||p==='—'||p==='-') return 'не назначено';
   return p;
 }
+const ADMIN_LOGIST_CLIENT_MARKUP=1.35;
+function adminCustomerPartyType(o){
+  const inn=String((o&&o.customerInn)||'').replace(/\D/g,'');
+  if(inn.length===10) return 'legal';
+  if(inn.length===12) return 'person';
+  const n=String((o&&o.customer)||'').toLowerCase();
+  if(/\b(ооо|оао|зао|пао|ао|ип|общество|компания)\b/u.test(n)) return 'legal';
+  return 'person';
+}
+function adminHydrateOrderReqsForDisplay(o){
+  if(!o) return o;
+  if(typeof applyVehicleTypeDefaultReqs==='function') applyVehicleTypeDefaultReqs(o, true);
+  if(!o.reqBodyType&&Array.isArray(o.vehicleTypeIds)&&o.vehicleTypeIds[0]&&typeof mapVtypeToBodyType==='function'){
+    o.reqBodyType=mapVtypeToBodyType(o.vehicleTypeIds[0]);
+  }
+  if(!(o.reqPayloadTons>0)&&o.cargoWeightKg>0) o.reqPayloadTons=Math.round(o.cargoWeightKg/10)/100;
+  if(!(o.cargoVolumeM3>0)&&o.reqLengthM>0&&o.reqWidthM>0&&o.reqHeightM>0){
+    o.cargoVolumeM3=Math.round(o.reqLengthM*o.reqWidthM*o.reqHeightM*10)/10;
+  }
+  return o;
+}
+function adminVehicleTypeHint(o){
+  const ids=Array.isArray(o&&o.vehicleTypeIds)?o.vehicleTypeIds:[];
+  const labels=ids.map(id=>typeof custVehicleTypeLabel==='function'?custVehicleTypeLabel(id):id).filter(Boolean);
+  return labels.length?labels.join(', '):'';
+}
+function adminCarrierOptionsForOrder(o){
+  const seen=new Set();
+  const out=[];
+  const push=c=>{ if(!c||!c.id||seen.has(c.id)) return; seen.add(c.id); out.push(c); };
+  push(findCompanyById(o&&o.ownCompanyId));
+  (companiesByRole('carrier')||[]).forEach(push);
+  (ownCompanies()||[]).forEach(push);
+  return out.sort((a,b)=>String(a.name).localeCompare(String(b.name),'ru'));
+}
+function adminDefaultCarrierId(o){
+  if(o&&o.carrierCompanyId) return o.carrierCompanyId;
+  if(o&&o.ownCompanyId) return o.ownCompanyId;
+  const cur=typeof currentOwnCompany==='function'?currentOwnCompany():null;
+  return cur&&cur.id||'';
+}
+function adminOrderLogistPricePair(o){
+  if(typeof suggestCustomerOrderPrice!=='function') return null;
+  const quote=suggestCustomerOrderPrice(o);
+  if(!quote) return null;
+  let carrier=typeof customerCarrierBaseCash==='function'?customerCarrierBaseCash(quote):null;
+  if(!(carrier>0)&&quote.minimumCash>0) carrier=Math.round(quote.minimumCash/ADMIN_LOGIST_CLIENT_MARKUP);
+  if(!(carrier>0)) return null;
+  return {
+    carrier:Math.round(carrier),
+    client:Math.round(carrier*ADMIN_LOGIST_CLIENT_MARKUP),
+    hint:quote.summary||''
+  };
+}
+function adminRecalcCargoVolumeFromDims(){
+  const l=numOrNull(($('d-req-l')||{}).value);
+  const w=numOrNull(($('d-req-w')||{}).value);
+  const h=numOrNull(($('d-req-h')||{}).value);
+  const volEl=$('d-cargo-volume');
+  if(!volEl||!(l>0&&w>0&&h>0)) return;
+  volEl.value=String(Math.round(l*w*h*10)/10);
+}
+function adminOrderRoadHeightWarnHtml(o){
+  if(typeof armadaCargoRoadHeightViolation!=='function'||typeof armadaHeightRoadWarningText!=='function') return '';
+  const ids=Array.isArray(o&&o.vehicleTypeIds)?o.vehicleTypeIds:[];
+  const vtid=ids[0]||'';
+  let cargoH=0;
+  if(o&&o.source==='armada_sx'&&o.reqHeightM>0) cargoH=+o.reqHeightM;
+  else if(Array.isArray(o&&o.cargoItems)&&o.cargoItems.length){
+    o.cargoItems.forEach(it=>{
+      const h=+(it&&(it.reqHeightM||it.heightM)||0);
+      if(h>cargoH) cargoH=h;
+    });
+  }
+  if(!(cargoH>0)&&o&&o.reqHeightM>0) cargoH=+o.reqHeightM;
+  const v=armadaCargoRoadHeightViolation(vtid, cargoH);
+  if(!v) return '';
+  const parts=armadaHeightRoadWarningText(v).split('\n\n');
+  return `<section class="form-section admin-order-law-warn" role="alert">
+    <p class="form-section-hint" style="color:var(--warn,#b45309)"><strong>${esc(parts[0]||'')}</strong></p>
+    ${parts[1]?`<p class="form-section-hint">${esc(parts[1])}</p>`:''}
+  </section>`;
+}
 function adminOrderDetailHeroHtml(o){
   const route=typeof routeText==='function'?routeText(o):'—';
   const when=o.vehicleAt&&typeof formatRuDateTimeAt==='function'?formatRuDateTimeAt(o.vehicleAt):'—';
@@ -4019,20 +5004,31 @@ function adminOrderDetailAssignSectionHtml(o){
   const openTrip=!o.startOdometer&&!o.departOdometer&&!looksClosedOrder(o)&&!o.cancelledAt;
   if(!canFleet||!openTrip||!firmId) return '';
   const drvList=fleetDriversForCompany(firmId);
-  const vehList=(fleetVehiclesForCompany(firmId)||[]).filter(v=>typeof vehicleFitsOrder!=='function'||vehicleFitsOrder(v,o));
   const curDrv=typeof orderDocDriverName==='function'?orderDocDriverName(o):String(o.driverName||'');
   let curPlate=typeof orderDocVehiclePlate==='function'?orderDocVehiclePlate(o):String(o.vehiclePlate||'');
   if(curPlate==='—'||curPlate==='-') curPlate='';
+  const platePack=typeof adminFleetPlateOptionsForOrder==='function'
+    ?adminFleetPlateOptionsForOrder(o, firmId, {
+      bookedPlate:String(o.bookedPlate||'').trim(),
+      currentPlate:String(curPlate||'').trim()
+    })
+    :{html:'', emptyHint:'', allCount:0, okCount:0, hintHtml:''};
   const drvVal=curDrv==='Диспетчер'||curDrv==='Биржа'||curDrv==='—'?'':curDrv;
+  const drvSelected=drvVal&&drvList.some(d=>samePersonName(d.name,drvVal));
   const drvField=drvList.length
-    ?`<select id="d-driver-name">${drvList.map(d=>`<option value="${esc(d.name)}"${samePersonName(d.name,drvVal||curDrv)?' selected':''}>${esc(d.name)}</option>`).join('')}</select>`
-    :`<input id="d-driver-name" value="${esc(drvVal)}" placeholder="ФИО водителя" />`;
-  const plateField=vehList.length
-    ?`<select id="d-vehicle-plate"><option value="">— выберите ТС —</option>${vehList.map(v=>`<option value="${esc(v.plate)}"${curPlate&&v.plate===curPlate?' selected':''}>${esc(v.plate)}</option>`).join('')}</select>`
-    :`<input id="d-vehicle-plate" value="${esc(curPlate)}" placeholder="Госномер" />`;
+    ?`<select id="d-driver-name"><option value=""${!drvSelected?' selected':''}>Назначьте водителя</option>${drvList.map(d=>`<option value="${esc(d.name)}"${samePersonName(d.name,drvVal)?' selected':''}>${esc(d.name)}</option>`).join('')}</select>`
+    :`<input id="d-driver-name" value="${esc(drvVal)}" placeholder="Назначьте водителя" />`;
+  const plateField=platePack.html
+    ?`<select id="d-vehicle-plate"><option value=""${!curPlate?' selected':''}>Выберите ТС</option>${platePack.html}</select>`
+    :`<input id="d-vehicle-plate" value="${esc(curPlate)}" placeholder="Выберите ТС" list="d-vehicle-plate-list" autocomplete="off" /><datalist id="d-vehicle-plate-list"></datalist>`;
+  const plateHint=platePack.allCount&&platePack.okCount===0&&platePack.emptyHint
+    ?`<p class="form-section-hint">${esc(platePack.emptyHint)}</p>`
+    :(!platePack.allCount?`<p class="form-section-hint">${esc(platePack.emptyHint||'В парке нет авто — Справочники → Авто.')}</p>`:'');
   return `<section class="form-section admin-order-assign">
     <h2 class="form-section-title">Назначение парка</h2>
     <p class="form-section-hint">Выберите водителя и авто — номер появится в карточке и у водителя в «Мои заявки».</p>
+    ${plateHint}
+    ${platePack.hintHtml||''}
     <div class="form-fields">
       <div class="form-pair">
         <div><label for="d-driver-name">Водитель</label>${drvField}</div>
@@ -4053,6 +5049,7 @@ function openDetail(id){
   if(typeof isLogistInboxOrder==='function' && isLogistInboxOrder(o)) markAdminInboxOrdersSeen([o]);
   if(!canAdminSeeOrder(o)){ alert('Чужой заказ — нет доступа'); show('admin'); renderAdmin(); return; }
   recomputeOrderTimes(ensureOrderTimeStamps(o));
+  adminHydrateOrderReqsForDisplay(o);
   const m=metrics(o);
   let editPoints=ensureRoutePoints(o).map(p=>({...p}));
   const readPointsFromDom=()=>{
@@ -4171,7 +5168,7 @@ function openDetail(id){
     </section>`:'';
   const tariffWrapOpen=portalOpen?'<details class="admin-order-advanced"><summary class="admin-order-advanced-summary">Тариф и итоги (для закрытых рейсов)</summary>':'';
   const tariffWrapClose=portalOpen?'</details>':'';
-  const docsBlock=`${orderDocsSectionHtml(o)}${orderEtrnSectionHtml(o)}`;
+  const docsBlock=`${typeof orderEtrnChecklistHtml==='function'?orderEtrnChecklistHtml(o):''}${orderDocsSectionHtml(o)}${orderEtrnSectionHtml(o)}`;
   const driverFieldsFallback=assignSection?'':`<div class="form-pair">
           <div>
             <label for="d-driver-name">Водитель</label>
@@ -4189,18 +5186,77 @@ function openDetail(id){
           </div>
         </div>
         <div id="d-driver-docs-warn" hidden></div>`;
+  const partyType=adminCustomerPartyType(o);
+  const vTypeHint=adminVehicleTypeHint(o);
+  const priceDraft=Object.assign({}, o, {fulfillment:o.fulfillment||'direct'});
+  const pricePair=adminOrderLogistPricePair(priceDraft);
+  const priceClientShow=o.priceForClient??(pricePair?pricePair.client:'');
+  const priceCarrierShow=o.priceForCarrier??(pricePair?pricePair.carrier:'');
+  const carrierDef=adminDefaultCarrierId(o);
+  const carrierOpts=adminCarrierOptionsForOrder(o);
+  const custInnShow=o.customerInn||(findCompanyById(o.customerId)||findCompanyByName(o.customer)||{}).inn||'';
   $('detail-form').innerHTML=`
     <div class="cust-form-blocks admin-order-blocks">
     ${adminOrderDetailHeroHtml(o)}
+    ${adminOrderRoadHeightWarnHtml(o)}
     ${assignSection}
     ${svodkaSection}
     ${portalOpen?'':docsBlock}
     <section class="form-section">
-      <h2 class="form-section-title">${portalOpen?'Заказчик и груз':'1. Заказчик и груз'}</h2>
+      <h2 class="form-section-title">${portalOpen?'Заказчик':'1. Заказчик'}</h2>
       <div class="form-fields">
         ${driverFieldsFallback}
         <label for="d-own-company">От нашей фирмы</label>
         <select id="d-own-company">${ownCompanies().map(c=>`<option value="${esc(c.id)}" ${(o.ownCompanyId===c.id || (!o.ownCompanyId && o.ownCompanyName===c.name))?'selected':''}>${esc(c.name)}</option>`).join('')||`<option value="">— нет наших фирм —</option>`}</select>
+        <label for="d-customer-type">Тип заказчика</label>
+        <select id="d-customer-type">
+          <option value="person" ${partyType==='person'?'selected':''}>Физическое лицо</option>
+          <option value="legal" ${partyType==='legal'?'selected':''}>Юридическое лицо</option>
+        </select>
+        <label for="d-customer">Наименование / ФИО</label>
+        <input id="d-customer" value="${esc(o.customer||'')}" placeholder="Компания или ФИО" />
+        <div id="d-customer-inn-wrap" ${partyType==='person'?'hidden':''}>
+          <label for="d-customer-inn">ИНН заказчика (обязательно для юр. лица)</label>
+          <div class="row" style="gap:8px;align-items:center">
+            <input id="d-customer-inn" inputmode="numeric" maxlength="12" placeholder="10 цифр" style="flex:1" value="${esc(custInnShow)}" />
+            <button type="button" class="secondary" id="d-customer-inn-lookup" style="width:auto;flex:0 0 auto;padding:8px 12px">Загрузить</button>
+          </div>
+          <div class="hint" id="d-customer-inn-status"></div>
+        </div>
+        <div class="form-pair">
+          <div>
+            <label for="d-contact-name">Контакт</label>
+            <input id="d-contact-name" value="${esc(o.contactName||'')}" placeholder="ФИО" />
+          </div>
+          <div>
+            <label for="d-contact-phone">Телефон контакта</label>
+            <input id="d-contact-phone" inputmode="tel" value="${esc(formatPhone(o.contactPhone||''))}" placeholder="+79650730002" />
+          </div>
+        </div>
+        <label for="d-carrier-company">Перевозчик</label>
+        <p class="hint">По умолчанию — наша фирма; смените, если возите партнёром.</p>
+        <select id="d-carrier-company">${carrierOpts.map(c=>`<option value="${esc(c.id)}" ${(o.carrierCompanyId===c.id||(!o.carrierCompanyId&&c.id===carrierDef))?'selected':''}>${esc(c.name)}</option>`).join('')||`<option value="">— нет перевозчика —</option>`}</select>
+        <label for="d-vehicle-date">Подача ТС — дата</label>
+        <input id="d-vehicle-date" lang="ru" placeholder="ДД.ММ.ГГГГ" inputmode="numeric" maxlength="10" value="${esc(toRuDateValue(o.vehicleAt))}" autocomplete="off" />
+        <label for="d-vehicle-time">Подача ТС — время</label>
+        <input id="d-vehicle-time" lang="ru" placeholder="ЧЧ:ММ" inputmode="numeric" maxlength="5" value="${esc(toTimeHmValue(o.vehicleAt))}" autocomplete="off" />
+        <div class="hint" id="d-free-hint">Ориентир освобождения: ${o.vehicleAt?esc(formatRuDateTimeAt(o.freeAt||computeFreeAt(o.vehicleAt,o,financeForOrder(o))))+' (подача + часы работы)':'укажите подачу ТС'}</div>
+      </div>
+    </section>
+    <section class="form-section">
+      <h2 class="form-section-title">${portalOpen?'Груз и ТС':'2. Груз и требования к ТС'}</h2>
+      <div class="form-fields">
+        <input type="hidden" id="d-cargo-kind" value="${esc(o.cargoKind||'')}" />
+        <label for="d-vehicle-vtype">Тип ТС (как у заказчика)</label>
+        <select id="d-vehicle-vtype">
+          <option value="">— не указан —</option>
+          ${['tent','van','board','dump','platform','shalanda','reefer','container','open','metal','isotherm'].map(id=>{
+            const lbl=typeof custVehicleTypeLabel==='function'?custVehicleTypeLabel(id):id;
+            const sel=(Array.isArray(o.vehicleTypeIds)&&o.vehicleTypeIds[0]===id)?' selected':'';
+            return `<option value="${esc(id)}"${sel}>${esc(lbl)}</option>`;
+          }).join('')}
+        </select>
+        ${vTypeHint?`<p class="hint">Из заявки: <strong>${esc(vTypeHint)}</strong>. Требования к кузову подставлены ниже.</p>`:''}
         <label>Требования к ТС (т / Д×Ш×В)</label>
         <div class="row">
           <input id="d-req-pay" inputmode="decimal" placeholder="т" value="${o.reqPayloadTons??''}" style="flex:0 0 64px;text-align:center" />
@@ -4208,22 +5264,11 @@ function openDetail(id){
           <input id="d-req-w" inputmode="decimal" placeholder="Ш, м" value="${o.reqWidthM??''}" style="flex:1;text-align:center" />
           <input id="d-req-h" inputmode="decimal" placeholder="В, м" value="${o.reqHeightM??''}" style="flex:1;text-align:center" />
         </div>
-        <div class="form-pair">
-          <div>
-            <label for="d-body-type">Кузов</label>
-            <select id="d-body-type">
-              <option value="">— не указан —</option>
-              ${(BODY_TYPES||[]).map(t=>`<option value="${esc(t.id)}" ${o.reqBodyType===t.id?'selected':''}>${esc(t.label)}</option>`).join('')}
-            </select>
-          </div>
-          <div>
-            <label for="d-cargo-kind">Груз</label>
-            <select id="d-cargo-kind">
-              <option value="">— не указан —</option>
-              ${(CARGO_KINDS||[]).map(t=>`<option value="${esc(t.id)}" ${o.cargoKind===t.id?'selected':''}>${esc(t.label)}</option>`).join('')}
-            </select>
-          </div>
-        </div>
+        <label for="d-body-type">Кузов</label>
+        <select id="d-body-type">
+          <option value="">— не указан —</option>
+          ${(BODY_TYPES||[]).map(t=>`<option value="${esc(t.id)}" ${o.reqBodyType===t.id?'selected':''}>${esc(t.label)}</option>`).join('')}
+        </select>
         <label for="d-cargo-desc">Описание груза (для документов)</label>
         <input id="d-cargo-desc" value="${esc(o.cargoDescription||'')}" placeholder="Паллеты, оборудование…" />
         <div class="form-triple">
@@ -4233,7 +5278,7 @@ function openDetail(id){
           </div>
           <div>
             <label for="d-cargo-volume">Объём, м³</label>
-            <input id="d-cargo-volume" inputmode="decimal" value="${o.cargoVolumeM3??''}" placeholder="12" />
+            <input id="d-cargo-volume" inputmode="decimal" value="${o.cargoVolumeM3??''}" placeholder="из Д×Ш×В" />
           </div>
           <div>
             <label for="d-cargo-weight">Масса, кг</label>
@@ -4253,50 +5298,31 @@ function openDetail(id){
             <input id="d-route-km" inputmode="numeric" value="${o.routeKm??''}" placeholder="авто" />
           </div>
         </div>
-        <label for="d-customer-inn">ИНН заказчика</label>
-        <div class="row" style="gap:8px;align-items:center">
-          <input id="d-customer-inn" inputmode="numeric" maxlength="12" placeholder="10 или 12 цифр" style="flex:1" value="${esc(o.customerInn||(findCompanyById(o.customerId)||findCompanyByName(o.customer)||{}).inn||'')}" />
-          <button type="button" class="secondary" id="d-customer-inn-lookup" style="width:auto;flex:0 0 auto;padding:8px 12px">Загрузить</button>
-        </div>
-        <div class="hint" id="d-customer-inn-status"></div>
-        <label for="d-customer">Заказчик (наименование)</label>
-        <input id="d-customer" value="${esc(o.customer||'')}" placeholder="Название компании" />
-        <label for="d-carrier-company">Перевозчик</label>
-        <select id="d-carrier-company"><option value="">— без перевозчика —</option>${companiesByRole('carrier').map(c=>`<option value="${esc(c.id)}" ${o.carrierCompanyId===c.id?'selected':''}>${esc(c.name)}</option>`).join('')}</select>
+      </div>
+    </section>
+    <section class="form-section">
+      <h2 class="form-section-title">${portalOpen?'Цена':'3. Цена'}</h2>
+      <p class="form-section-hint">Перевозчик — по тарифу и типу ТС; заказчик — на <strong>35%</strong> выше перевозчика (можно поправить вручную).</p>
+      ${pricePair&&pricePair.hint?`<p class="hint" id="d-price-tariff-hint">${esc(pricePair.hint)}</p>`:''}
+      <div class="form-fields">
         <div class="form-pair">
           <div>
-            <label for="d-contact-name">Контакт</label>
-            <input id="d-contact-name" value="${esc(o.contactName||'')}" placeholder="ФИО" />
+            <label for="d-price-carrier">Цена перевозчику, ₽</label>
+            <input id="d-price-carrier" inputmode="decimal" value="${priceCarrierShow??''}" placeholder="из тарифа" />
           </div>
           <div>
-            <label for="d-contact-phone">Телефон контакта</label>
-            <input id="d-contact-phone" inputmode="tel" value="${esc(formatPhone(o.contactPhone||''))}" placeholder="+79650730002" />
+            <label for="d-price-client">Цена заказчику, ₽</label>
+            <input id="d-price-client" inputmode="decimal" value="${priceClientShow??''}" placeholder="+35%" />
           </div>
         </div>
-        <label for="d-vehicle-date">Подача ТС — дата</label>
-        <input id="d-vehicle-date" lang="ru" placeholder="ДД.ММ.ГГГГ" inputmode="numeric" maxlength="10" value="${esc(toRuDateValue(o.vehicleAt))}" autocomplete="off" />
-        <label for="d-vehicle-time">Подача ТС — время</label>
-        <input id="d-vehicle-time" lang="ru" placeholder="ЧЧ:ММ" inputmode="numeric" maxlength="5" value="${esc(toTimeHmValue(o.vehicleAt))}" autocomplete="off" />
-        <div class="hint" id="d-free-hint">Ориентир освобождения: ${o.vehicleAt?esc(formatRuDateTimeAt(o.freeAt||computeFreeAt(o.vehicleAt,o,financeForOrder(o))))+' (подача + часы работы)':'укажите подачу ТС'}</div>
-        <h3 style="margin:12px 0 4px;font-size:.85rem">Цены</h3>
-        <div class="form-pair">
-          <div>
-            <label for="d-price-client">Цена для заказчика, ₽</label>
-            <input id="d-price-client" inputmode="decimal" value="${o.priceForClient??''}" placeholder="сумма" />
-          </div>
-          <div>
-            <label for="d-price-carrier">Цена для перевозчика, ₽</label>
-            <input id="d-price-carrier" inputmode="decimal" value="${o.priceForCarrier??''}" placeholder="сумма" />
-          </div>
-        </div>
-        ${o.bookedPlate?`<p class="hint">${o.bookStatus==='confirmed'?'Бронь подтверждена':'Запрос брони'}: ${esc(o.bookedPlate)}${o.bookStatus==='confirmed'?' · в календаре на дату подачи':o.bookStatus==='requested'?' · ждут вашего подтверждения':o.bookStatus==='rejected'?' · отклонена':''}</p>`:''}
-        ${o.fulfillment==='logist'?'<p class="hint">Срочно: заказчик просит закрыть как можно скорее, ставка логиста в цене.</p>':o.fulfillment==='direct'?'<p class="hint">Прямой парк, без срочной ставки логиста.</p>':''}
+        <button type="button" class="secondary" id="d-price-recalc" style="width:auto">Пересчитать из тарифа</button>
         ${typeof logistMarginLine==='function'&&logistMarginLine(o)?`<p class="hint">${esc(logistMarginLine(o))}</p>`:''}
+        ${o.bookedPlate?`<p class="hint">${o.bookStatus==='confirmed'?'Бронь подтверждена':'Запрос брони'}: ${esc(o.bookedPlate)}</p>`:''}
       </div>
     </section>
     ${typeof orderDriverVehicleDocsSectionHtml==='function'?orderDriverVehicleDocsSectionHtml(o):''}
     <section class="form-section">
-      <h2 class="form-section-title">2. Маршрут</h2>
+      <h2 class="form-section-title">${portalOpen?'Маршрут':'4. Маршрут'}</h2>
       <div class="form-fields">
         <div id="route-editor"></div>
         <div class="form-pair">
@@ -4318,7 +5344,7 @@ function openDetail(id){
           <span>Грузоотправитель = заказчик</span>
         </label>
         <div id="d-shipper-fields" class="cust-shipper-fields" ${o.shipperSameAsCustomer!==false?'hidden':''}>
-          <p class="hint">Грузоотправитель подписывает T1 в ЭТрН на погрузке.</p>
+          <p class="hint">Грузоотправитель подписывает T1 в ЭТрН на погрузке (КЭП через оператора). Без КЭП — бумажная ТН на погрузке; ссылка T1 в приложении не заменяет бумагу и не НЭП.</p>
           <div class="form-pair">
             <div>
               <label for="d-shipper-name">Грузоотправитель</label>
@@ -4356,7 +5382,15 @@ function openDetail(id){
     ${tariffWrapOpen}
     <section class="form-section">
       <h2 class="form-section-title">${portalOpen?'Тариф клиенту':'3. Тариф клиенту'}</h2>
-      <p class="form-section-hint">${(()=>{ const f=financeForOrder(o); return `Пакет: мин ${f.minWorkHours} ч + ${f.podachaHours} ч подачи; в пакете ${f.cityKmThreshold} км. Нулевой до ≤${f.podachaEmptyKmLimit??20} км и дешевле 1 ч подачи — 1 ч; иначе 2 ч. Сверх — ₽/км.`; })()}</p>
+      <p class="form-section-hint">${(()=>{
+        const fin0=financeForOrder(o);
+        const pick=typeof findTariffRuleForOrder==='function'?findTariffRuleForOrder(o, fin0):null;
+        if(pick&&pick.missingRate) return `⚠ ${pick.label}. Заполните ₽/час в Справочники → Тарифы.`;
+        const f=typeof financeForOrderType==='function'?financeForOrderType(o, fin0):fin0;
+        const kad=f.ratePerKmOutsideKad>0?`${f.ratePerKmOutsideKad} ₽/км`:'как сверх пакета';
+        const band=pick&&pick.label?`Тариф: ${pick.label}. `:'';
+        return `${band}Часы ${f.minWorkHours} ч · подача ${f.podachaHours} ч · пакет ${f.cityKmThreshold} км · сверх ${f.defaultRatePerKmCash} ₽/км · КАД: ${kad}.`;
+      })()}</p>
       <div class="form-fields">
         <div class="form-pair">
           <div>
@@ -4506,7 +5540,6 @@ function openDetail(id){
     refreshDriverDocsWarnBox($('d-driver-docs-warn'), nm, detailFirmId());
   };
   $('d-driver-name')&&($('d-driver-name').oninput=refreshDetailDrvWarn);
-  $('d-driver-name')&&($('d-driver-name').onchange=refreshDetailDrvWarn);
   $('d-own-company')&&($('d-own-company').onchange=refreshDetailDrvWarn);
   refreshDetailDrvWarn();
   const detailAssignBtn=$('detail-assign-apply');
@@ -4543,6 +5576,51 @@ function openDetail(id){
   if(shipSameEl&&shipBox){
     shipSameEl.onchange=()=>{ shipBox.hidden=shipSameEl.checked; };
   }
+  const syncCustomerInnWrap=()=>{
+    const wrap=$('d-customer-inn-wrap');
+    const typ=(($('d-customer-type')||{}).value||'person');
+    if(wrap) wrap.hidden=(typ==='person');
+    if(typ==='person'&&$('d-customer-inn')) $('d-customer-inn').value='';
+  };
+  $('d-customer-type')&&($('d-customer-type').onchange=syncCustomerInnWrap);
+  syncCustomerInnWrap();
+  const applyDetailPriceFromCarrier=()=>{
+    const c=numOrNull(($('d-price-carrier')||{}).value);
+    if(!(c>0)) return;
+    const cl=$('d-price-client');
+    if(cl) cl.value=String(Math.round(c*ADMIN_LOGIST_CLIENT_MARKUP));
+  };
+  const recalcDetailPricesFromTariff=()=>{
+    const order=state.orders.find(x=>x.id===id);
+    if(!order) return;
+    const draft=Object.assign({}, order, {
+      ownCompanyId:(($('d-own-company')||{}).value)||order.ownCompanyId,
+      reqBodyType:(($('d-body-type')||{}).value||'').trim()||order.reqBodyType,
+      reqPayloadTons:numOrNull(($('d-req-pay')||{}).value),
+      tripMode:(($('d-trip-mode')||{}).value||'')==='intercity'?'intercity':'city',
+      routeKm:numOrNull(($('d-route-km')||{}).value),
+      fulfillment:order.fulfillment||'direct'
+    });
+    const pair=adminOrderLogistPricePair(draft);
+    if(!pair) return;
+    if($('d-price-carrier')) $('d-price-carrier').value=String(pair.carrier);
+    if($('d-price-client')) $('d-price-client').value=String(pair.client);
+    const hint=$('d-price-tariff-hint');
+    if(hint&&pair.hint) hint.textContent=pair.hint;
+  };
+  $('d-price-carrier')&&($('d-price-carrier').onchange=applyDetailPriceFromCarrier);
+  $('d-price-recalc')&&($('d-price-recalc').onclick=recalcDetailPricesFromTariff);
+  ['d-req-l','d-req-w','d-req-h'].forEach(id=>{
+    const el=$(id);
+    if(el) el.oninput=adminRecalcCargoVolumeFromDims;
+  });
+  const fillDetailDriverPhone=()=>{
+    const nm=(($('d-driver-name')||{}).value||'').trim();
+    if(!nm) return;
+    const rec=findDriverRecord(nm, detailFirmId());
+    if(rec&&rec.phone&&$('d-driver-phone')) $('d-driver-phone').value=formatPhone(rec.phone);
+  };
+  $('d-driver-name')&&($('d-driver-name').onchange=()=>{ refreshDetailDrvWarn(); fillDetailDriverPhone(); });
   $('d-customer-inn-lookup')&&($('d-customer-inn-lookup').onclick=()=>{
     applyCustomerFromInn((($('d-customer-inn')||{}).value||'').trim(), $('d-customer-inn-status'), 'd');
   });
@@ -4590,7 +5668,14 @@ function openDetail(id){
     }
     const num=el=>{ const v=($(el).value||'').trim().replace(',','.'); return v===''?null:Number(v); };
     order.customer=($('d-customer').value||'').trim();
-    const custInn=String((($('d-customer-inn')||{}).value||'')).replace(/\D/g,'');
+    const custParty=(($('d-customer-type')||{}).value||'person');
+    let custInn=String((($('d-customer-inn')||{}).value||'')).replace(/\D/g,'');
+    if(custParty==='person'){
+      custInn='';
+    }else if(custInn.length!==10){
+      showErr('Для юридического лица укажите ИНН (10 цифр) или нажмите «Загрузить»');
+      return;
+    }
     order.customerInn=custInn;
     order.priceForClient=numOrNull(($('d-price-client')||{}).value);
     order.priceForCarrier=numOrNull(($('d-price-carrier')||{}).value);
@@ -4613,6 +5698,9 @@ function openDetail(id){
     order.reqWidthM=numOrNull(($('d-req-w')||{}).value);
     order.reqHeightM=numOrNull(($('d-req-h')||{}).value);
     order.reqBodyType=(($('d-body-type')||{}).value||'').trim()||null;
+    const vtypeSel=(($('d-vehicle-vtype')||{}).value||'').trim();
+    if(vtypeSel) order.vehicleTypeIds=[vtypeSel];
+    else if(Array.isArray(order.vehicleTypeIds)) order.vehicleTypeIds=order.vehicleTypeIds.filter(Boolean);
     order.cargoKind=(($('d-cargo-kind')||{}).value||'').trim()||null;
     order.cargoDescription=(($('d-cargo-desc')||{}).value||'').trim();
     order.cargoPlaces=numOrNull(($('d-cargo-places')||{}).value);
@@ -4637,6 +5725,11 @@ function openDetail(id){
     order.consigneeName=(($('d-consignee-name')||{}).value||'').trim();
     order.consigneeInn=(($('d-consignee-inn')||{}).value||'').trim();
     order.consigneePhone=formatPhone((($('d-consignee-phone')||{}).value||'').trim());
+    if(order.shipperSameAsCustomer!==false){
+      if(order.transportDocMode!=='etrn') order.transportDocMode='paper_tn';
+    } else if(!order.transportDocMode){
+      order.transportDocMode='etrn';
+    }
     order.loadingOwnerInn=String((($('d-loading-owner-inn')||{}).value||'')).replace(/\D/g,'');
     order.transportDeadline=(($('d-transport-deadline')||{}).value||'').trim();
     if(order.customer){
@@ -4705,6 +5798,43 @@ function validateFleetTrailer(trailer){
   }
   return true;
 }
+const FLEET_REQUIRED_LABEL_TO_KEY={
+  'госномер':'plate',
+  'тип кузова':'bodyTypeId',
+  'грузоподъёмность':'payloadTons',
+  'длина кузова':'bodyLengthM',
+  'ширина кузова':'bodyWidthM',
+  'высота кузова':'bodyHeightM'
+};
+function fleetVehicleFieldIdsCatalog(i){
+  return {plate:null, bodyTypeId:'veh-body-'+i, payloadTons:'veh-pay-'+i, bodyLengthM:'veh-l-'+i, bodyWidthM:'veh-w-'+i, bodyHeightM:'veh-h-'+i};
+}
+function fleetVehicleFieldIdsCard(){
+  return {plate:null, bodyTypeId:'vc-body-type', payloadTons:'vc-payload', bodyLengthM:'vc-l', bodyWidthM:'vc-w', bodyHeightM:'vc-h'};
+}
+function fleetVehicleFieldIdsAdd(){
+  return {plate:'own-veh-plate', bodyTypeId:'own-veh-body', payloadTons:'own-veh-pay', bodyLengthM:'own-veh-l', bodyWidthM:'own-veh-w', bodyHeightM:'own-veh-h'};
+}
+function clearFleetVehicleFieldHighlight(root){
+  (root||document).querySelectorAll('.field-invalid').forEach(el=>el.classList.remove('field-invalid'));
+}
+function highlightFleetVehicleMissing(missing, fieldMap, root){
+  clearFleetVehicleFieldHighlight(root);
+  (missing||[]).forEach(label=>{
+    const key=FLEET_REQUIRED_LABEL_TO_KEY[label];
+    const id=key&&fieldMap&&fieldMap[key];
+    const el=id&&$(id);
+    if(el) el.classList.add('field-invalid');
+  });
+}
+function assertFleetVehicleRequired(v, fieldMap, root){
+  const miss=typeof vehicleMissingRequiredParams==='function'?vehicleMissingRequiredParams(v):[];
+  if(!miss.length) return true;
+  const msg=typeof vehicleRequiredParamsMessage==='function'?vehicleRequiredParamsMessage(miss):('Заполните: '+miss.join(', '));
+  highlightFleetVehicleMissing(miss, fieldMap, root);
+  alert(msg);
+  return false;
+}
 function readFleetVehicleRowFromDom(i, prev){
   const v=prev||((state.vehicles||[])[i]);
   if(!v) return null;
@@ -4729,6 +5859,7 @@ function readFleetVehicleRowFromDom(i, prev){
 function saveFleetVehicleRow(i){
   const updated=readFleetVehicleRowFromDom(i);
   if(!updated) return false;
+  if(!assertFleetVehicleRequired(updated, fleetVehicleFieldIdsCatalog(i), $('catalogs-form'))) return false;
   state.vehicles[i]=updated;
   bumpDataEpoch('save-vehicle');
   persist();
@@ -4786,6 +5917,377 @@ function flashCatOk(msg){
   const ms=(msg&&msg.length>20)?3200:1600;
   flashCatOk._t=setTimeout(()=>{ if(el) el.style.display='none'; }, ms);
 }
+function finRuleTitleFromDomBox(box){
+  const num=sel=>{
+    const el=box.querySelector(sel);
+    const raw=(el&&el.value||'').trim().replace(',','.');
+    if(raw==='') return 0;
+    const n=+raw;
+    return Number.isNaN(n)?0:n;
+  };
+  const bodyEl=box.querySelector('[data-fin-body]');
+  const len=num('[data-fin-len]');
+  const lto=num('[data-fin-lto]');
+  const rule={
+    bodyTypeId:(bodyEl&&bodyEl.value||'').trim(),
+    lengthFromM:len,
+    lengthToM:lto>0?lto:len,
+    widthM:num('[data-fin-w]'),
+    heightM:num('[data-fin-h]'),
+    payloadFromTons:num('[data-fin-from]'),
+    payloadToTons:num('[data-fin-to]')
+  };
+  return typeof tariffRuleDisplayTitle==='function'?tariffRuleDisplayTitle(rule):'Правило тарифа';
+}
+function refreshFinRuleTitles(){
+  document.querySelectorAll('.fin-rule-row').forEach(box=>{
+    const el=box.querySelector('.fin-rule-title');
+    if(el) el.textContent=finRuleTitleFromDomBox(box);
+  });
+}
+let finTariffFilterState=null;
+function finFilterNum(raw){
+  const v=String(raw||'').trim().replace(',','.');
+  if(v==='') return null;
+  const n=+v;
+  return Number.isNaN(n)?null:n;
+}
+function finTariffRuleFromDomBox(box){
+  const num=sel=>{
+    const el=box.querySelector(sel);
+    const raw=(el&&el.value||'').trim().replace(',','.');
+    if(raw==='') return 0;
+    const n=+raw;
+    return Number.isNaN(n)?0:n;
+  };
+  const bodyEl=box.querySelector('[data-fin-body]');
+  const len=num('[data-fin-len]');
+  const lto=num('[data-fin-lto]');
+  return {
+    id:box.dataset.ruleId||'',
+    bodyTypeId:(bodyEl&&bodyEl.value||'').trim(),
+    payloadFromTons:num('[data-fin-from]'),
+    payloadToTons:num('[data-fin-to]'),
+    lengthFromM:len,
+    lengthToM:lto>0?lto:len,
+    widthM:num('[data-fin-w]'),
+    heightM:num('[data-fin-h]')
+  };
+}
+function finTariffRuleMatchesFilter(rule, f){
+  if(!f) return true;
+  if(f.group&&typeof tariffRuleUiGroup==='function'){
+    if(tariffRuleUiGroup(rule.bodyTypeId).key!==f.group) return false;
+  }
+  const len=+(rule.lengthFromM||0)||+(rule.lengthToM||0);
+  if(f.lenMin!=null&&len<f.lenMin) return false;
+  if(f.lenMax!=null&&len>f.lenMax) return false;
+  if(f.wMin!=null&&(+(rule.widthM||0)||0)<f.wMin) return false;
+  if(f.wMax!=null&&+(rule.widthM||0)>f.wMax) return false;
+  if(f.hMin!=null&&(+(rule.heightM||0)||0)<f.hMin) return false;
+  if(f.hMax!=null&&+(rule.heightM||0)>f.hMax) return false;
+  const tons=+(rule.payloadToTons||0)||+(rule.payloadFromTons||0);
+  if(f.tMin!=null&&tons<f.tMin) return false;
+  if(f.tMax!=null&&+(rule.payloadToTons||rule.payloadFromTons||0)>f.tMax) return false;
+  if(f.q){
+    const title=(typeof tariffRuleDisplayTitle==='function'?tariffRuleDisplayTitle(rule):'').toLowerCase();
+    if(!title.includes(f.q)) return false;
+  }
+  return true;
+}
+function applyFinTariffFilter(){
+  const wrap=$('fin-rules-wrap');
+  if(!wrap) return;
+  const f=finTariffFilterState;
+  const hint=$('fin-filter-active-hint');
+  if(hint){
+    if(f&&Object.keys(f).some(k=>f[k]!=null&&f[k]!=='')) hint.textContent='Фильтр включён';
+    else hint.textContent='';
+  }
+  wrap.querySelectorAll('.fin-rule-group').forEach(sec=>{
+    let visible=0;
+    sec.querySelectorAll('.fin-rule-row').forEach(box=>{
+      const ok=finTariffRuleMatchesFilter(finTariffRuleFromDomBox(box), f);
+      box.style.display=ok?'':'none';
+      if(ok) visible++;
+    });
+    sec.style.display=visible? '':'none';
+  });
+}
+function finRulesGroupsInnerHtml(rules, fin, openIds){
+  const grouped=typeof groupTariffRulesForUi==='function'?groupTariffRulesForUi(rules):[{key:'other', label:'Тариф', rules:rules||[]}];
+  if(!grouped.length) return '';
+  let firstDefaultOpen=!openIds||!openIds.size;
+  return grouped.map(g=>`
+    <section class="fin-rule-group" data-fin-group="${esc(g.key)}">
+      <h4 class="fin-rule-group-title">${esc(g.label)}</h4>
+      ${(g.rules||[]).map(r=>{
+        let collapsed=true;
+        if(openIds&&openIds.size) collapsed=!openIds.has(r.id);
+        else if(firstDefaultOpen){ collapsed=false; firstDefaultOpen=false; }
+        return cabinetTariffRuleRowHtml(r, fin, {collapsed});
+      }).join('')}
+    </section>`).join('');
+}
+function reorganizeFinRulesFromDom(fin){
+  const wrap=$('fin-rules-wrap');
+  if(!wrap) return;
+  const openIds=new Set();
+  wrap.querySelectorAll('.fin-rule-row[open]').forEach(el=>openIds.add(el.dataset.ruleId));
+  const rules=readCabinetTariffRulesFromDom();
+  const inner=finRulesGroupsInnerHtml(rules, fin, openIds);
+  wrap.innerHTML=inner||'<p class="hint">Нет правил — нажмите «+ правило тарифа».</p>';
+  wireFinRuleButtons();
+}
+function ensureFinTariffFilterOverlay(){
+  let el=$('fin-filter-overlay');
+  if(el) return el;
+  el=document.createElement('div');
+  el.id='fin-filter-overlay';
+  el.className='fin-filter-overlay';
+  el.hidden=true;
+  el.innerHTML=`<div class="fin-filter-modal" role="dialog" aria-modal="true" aria-labelledby="fin-filter-title">
+    <header class="fin-filter-modal-head">
+      <strong id="fin-filter-title">Фильтр карточек тарифа</strong>
+      <button type="button" class="icon-btn" id="fin-filter-close" aria-label="Закрыть">×</button>
+    </header>
+    <div class="fin-grid fin-filter-grid">
+      <label class="svc-full">Группа<select id="fin-filter-group">
+        <option value="">Все</option>
+        <option value="board">Бортовые</option>
+        <option value="tent">Тент</option>
+        <option value="van">Фургоны</option>
+        <option value="reefer">Рефрижераторы</option>
+        <option value="dump">Самосвалы</option>
+        <option value="other">Прочее</option>
+      </select></label>
+      <label>Длина от, м<input id="fin-filter-lmin" inputmode="decimal" placeholder="0" /></label>
+      <label>Длина до, м<input id="fin-filter-lmax" inputmode="decimal" placeholder="∞" /></label>
+      <label>Ширина от, м<input id="fin-filter-wmin" inputmode="decimal" /></label>
+      <label>Ширина до, м<input id="fin-filter-wmax" inputmode="decimal" /></label>
+      <label>Высота от, м<input id="fin-filter-hmin" inputmode="decimal" /></label>
+      <label>Высота до, м<input id="fin-filter-hmax" inputmode="decimal" /></label>
+      <label>Тоннаж от, т<input id="fin-filter-tmin" inputmode="decimal" /></label>
+      <label>Тоннаж до, т<input id="fin-filter-tmax" inputmode="decimal" /></label>
+      <label class="svc-full">Текст в названии<input id="fin-filter-q" placeholder="борт, 3 м, 1,5 т…" /></label>
+    </div>
+    <div class="row fin-filter-actions">
+      <button type="button" class="primary" id="fin-filter-apply" style="width:auto">Применить</button>
+      <button type="button" class="secondary" id="fin-filter-reset" style="width:auto">Сбросить</button>
+    </div>
+  </div>`;
+  document.body.appendChild(el);
+  el.addEventListener('click', ev=>{ if(ev.target===el) closeFinTariffFilterModal(); });
+  $('fin-filter-close').onclick=()=>closeFinTariffFilterModal();
+  $('fin-filter-apply').onclick=()=>{
+    finTariffFilterState={
+      group:(($('fin-filter-group')||{}).value||'').trim()||null,
+      lenMin:finFilterNum(($('fin-filter-lmin')||{}).value),
+      lenMax:finFilterNum(($('fin-filter-lmax')||{}).value),
+      wMin:finFilterNum(($('fin-filter-wmin')||{}).value),
+      wMax:finFilterNum(($('fin-filter-wmax')||{}).value),
+      hMin:finFilterNum(($('fin-filter-hmin')||{}).value),
+      hMax:finFilterNum(($('fin-filter-hmax')||{}).value),
+      tMin:finFilterNum(($('fin-filter-tmin')||{}).value),
+      tMax:finFilterNum(($('fin-filter-tmax')||{}).value),
+      q:(($('fin-filter-q')||{}).value||'').trim().toLowerCase()||null
+    };
+    if(!finTariffFilterState.group&&!finTariffFilterState.q
+      &&finTariffFilterState.lenMin==null&&finTariffFilterState.lenMax==null
+      &&finTariffFilterState.wMin==null&&finTariffFilterState.wMax==null
+      &&finTariffFilterState.hMin==null&&finTariffFilterState.hMax==null
+      &&finTariffFilterState.tMin==null&&finTariffFilterState.tMax==null){
+      finTariffFilterState=null;
+    }
+    applyFinTariffFilter();
+    closeFinTariffFilterModal();
+  };
+  $('fin-filter-reset').onclick=()=>{
+    finTariffFilterState=null;
+    ['fin-filter-group','fin-filter-lmin','fin-filter-lmax','fin-filter-wmin','fin-filter-wmax','fin-filter-hmin','fin-filter-hmax','fin-filter-tmin','fin-filter-tmax','fin-filter-q'].forEach(id=>{
+      const n=$(id); if(!n) return;
+      if(n.tagName==='SELECT') n.value=''; else n.value='';
+    });
+    applyFinTariffFilter();
+    closeFinTariffFilterModal();
+  };
+  return el;
+}
+function openFinTariffFilterModal(){
+  ensureFinTariffFilterOverlay();
+  const f=finTariffFilterState||{};
+  const set=(id,v)=>{ const n=$(id); if(n) n.value=v==null?'':String(v); };
+  set('fin-filter-group', f.group||'');
+  set('fin-filter-lmin', f.lenMin); set('fin-filter-lmax', f.lenMax);
+  set('fin-filter-wmin', f.wMin); set('fin-filter-wmax', f.wMax);
+  set('fin-filter-hmin', f.hMin); set('fin-filter-hmax', f.hMax);
+  set('fin-filter-tmin', f.tMin); set('fin-filter-tmax', f.tMax);
+  set('fin-filter-q', f.q||'');
+  const el=$('fin-filter-overlay');
+  if(el) el.hidden=false;
+}
+function closeFinTariffFilterModal(){
+  const el=$('fin-filter-overlay');
+  if(el) el.hidden=true;
+}
+function duplicateFinTariffRule(sourceRuleId){
+  const finCo=typeof catalogFinanceCompany==='function'?catalogFinanceCompany():null;
+  const fin=finCo?financeForCompanyId(finCo.id):normalizeFinance(state.finance);
+  const wrap=$('fin-rules-wrap');
+  if(!wrap) return;
+  const rules=readCabinetTariffRulesFromDom();
+  const src=rules.find(r=>r.id===sourceRuleId);
+  if(!src) return;
+  const copy=Object.assign({}, src, {id:typeof uuid==='function'?uuid():String(Date.now())});
+  rules.push(copy);
+  const empty=wrap.querySelector('.hint');
+  if(empty) empty.remove();
+  wrap.innerHTML=finRulesGroupsInnerHtml(rules, fin, new Set([copy.id]));
+  wireFinRuleButtons();
+}
+function wireFinRuleButtons(){
+  const finRulesWrap=$('fin-rules-wrap');
+  if(!finRulesWrap) return;
+  finRulesWrap.querySelectorAll('.fin-rule-copy').forEach(btn=>{
+    btn.onclick=()=>{
+      const row=btn.closest('.fin-rule-row');
+      if(row&&row.dataset.ruleId) duplicateFinTariffRule(row.dataset.ruleId);
+    };
+  });
+  finRulesWrap.querySelectorAll('.fin-rule-del').forEach(btn=>{
+    btn.onclick=()=>{ const row=btn.closest('.fin-rule-row'); if(row) row.remove(); };
+  });
+  finRulesWrap.querySelectorAll('input,select').forEach(inp=>{
+    inp.oninput=()=>{ refreshFinRuleTitles(); applyFinTariffFilter(); };
+    inp.onchange=()=>{
+      refreshFinRuleTitles();
+      if(inp.matches('[data-fin-body]')){
+        const finCo=typeof catalogFinanceCompany==='function'?catalogFinanceCompany():null;
+        const fin=finCo?financeForCompanyId(finCo.id):normalizeFinance(state.finance);
+        reorganizeFinRulesFromDom(fin);
+      }else applyFinTariffFilter();
+    };
+  });
+  refreshFinRuleTitles();
+  applyFinTariffFilter();
+}
+function readCabinetTariffRulesFromDom(){
+  const rules=[];
+  const root=$('fin-rules-wrap')||document;
+  root.querySelectorAll('.fin-rule-row').forEach(box=>{
+    const num=sel=>{
+      const el=box.querySelector(sel);
+      const raw=(el&&el.value||'').trim().replace(',','.');
+      if(raw==='') return 0;
+      const n=+raw;
+      return Number.isNaN(n)?0:n;
+    };
+    const bodyEl=box.querySelector('[data-fin-body]');
+    const len=num('[data-fin-len]');
+    const lto=num('[data-fin-lto]');
+    rules.push({
+      id:box.dataset.ruleId||'',
+      bodyTypeId:(bodyEl&&bodyEl.value||'').trim(),
+      payloadFromTons:num('[data-fin-from]'),
+      payloadToTons:num('[data-fin-to]'),
+      lengthFromM:len,
+      lengthToM:lto>0?lto:len,
+      widthM:num('[data-fin-w]'),
+      heightM:num('[data-fin-h]'),
+      ratePerHour:num('[data-fin-hour]'),
+      minWorkHours:num('[data-fin-work]'),
+      podachaHours:num('[data-fin-podacha]'),
+      podachaEmptyKmLimit:num('[data-fin-empty]'),
+      cityKmThreshold:num('[data-fin-km]'),
+      ratePerKm:num('[data-fin-kmrate]'),
+      ratePerKmKad:num('[data-fin-kad]')
+    });
+  });
+  return rules;
+}
+function readCabinetTypeTariffs(){
+  const byType={};
+  readCabinetTariffRulesFromDom().forEach(r=>{
+    if(!r.bodyTypeId||!(+r.ratePerHour>0)) return;
+    byType[r.bodyTypeId]=r;
+  });
+  return byType;
+}
+function cabinetTariffRuleRowHtml(rule, fin, opts){
+  const row=rule||{};
+  const o=opts||{};
+  const lenVal=(row.lengthFromM??'')!==''&&row.lengthFromM!=null?row.lengthFromM:(row.lengthToM??'');
+  const lenToDiff=(+row.lengthToM>0&&+row.lengthFromM>0&&Math.abs(+row.lengthToM-+row.lengthFromM)>0.001)?row.lengthToM:'';
+  const title=typeof tariffRuleDisplayTitle==='function'?tariffRuleDisplayTitle(row):'Правило тарифа';
+  const bodyOpts=typeof fleetBodyTypeOptionsHtml==='function'?fleetBodyTypeOptionsHtml(row.bodyTypeId||''):'';
+  const uiGrp=typeof tariffRuleUiGroup==='function'?tariffRuleUiGroup(row.bodyTypeId):{key:'other'};
+  const openAttr=o.collapsed?'':' open';
+  return `<details class="fin-rule-row fin-type-row" data-rule-id="${esc(row.id||'')}" data-fin-ui-group="${esc(uiGrp.key||'other')}" style="margin-top:10px;border:1px solid var(--border,#ddd);border-radius:10px;padding:0 10px 10px"${openAttr}>
+    <summary class="fin-rule-summary" style="cursor:pointer;padding:10px 0;list-style:none;font-weight:600;font-size:.88rem;line-height:1.35">
+      <span class="fin-rule-title">${esc(title)}</span>
+    </summary>
+    <div class="fin-rule-body">
+      <div class="row fin-rule-actions" style="justify-content:flex-end;gap:8px;margin-bottom:6px;align-items:center">
+        <button type="button" class="icon-btn fin-rule-copy chat-icon-copy" title="Копировать тариф" aria-label="Копировать тариф">${typeof copySheetsIconHtml==='function'?copySheetsIconHtml(16):'⧉'}</button>
+        <button type="button" class="secondary fin-rule-del" style="width:auto;padding:4px 10px">Удалить</button>
+      </div>
+      <div class="fin-grid">
+        <label class="svc-full">Тип ТС<select data-fin-body>${bodyOpts}</select></label>
+        <label>Длина, м<input data-fin-len inputmode="decimal" value="${lenVal??''}" placeholder="3" /></label>
+        <label>Длина до, м <span class="hint" title="Пусто — как «Длина»">опц.</span><input data-fin-lto inputmode="decimal" value="${lenToDiff??''}" placeholder="—" /></label>
+        <label>Ширина, м<input data-fin-w inputmode="decimal" value="${row.widthM??''}" placeholder="2" /></label>
+        <label>Высота, м<input data-fin-h inputmode="decimal" value="${row.heightM??''}" placeholder="0,4" /></label>
+        <label>Грузоподъёмность от, т<input data-fin-from inputmode="decimal" value="${row.payloadFromTons??''}" placeholder="0" /></label>
+        <label>Грузоподъёмность до, т<input data-fin-to inputmode="decimal" value="${row.payloadToTons??''}" placeholder="1,5" /></label>
+        <label>₽/час<input data-fin-hour inputmode="decimal" value="${row.ratePerHour||''}" placeholder="${esc(String(fin.defaultRatePerHourWork||''))}" /></label>
+        <label>Часы работы, ч<input data-fin-work inputmode="decimal" value="${row.minWorkHours??''}" placeholder="${esc(String(fin.minWorkHours??4))}" /></label>
+        <label>Подача, ч<input data-fin-podacha inputmode="decimal" value="${row.podachaHours??''}" placeholder="${esc(String(fin.podachaHours??1))}" /></label>
+        <label>Нулевой до, км<input data-fin-empty inputmode="numeric" value="${row.podachaEmptyKmLimit??''}" placeholder="${esc(String(fin.podachaEmptyKmLimit??20))}" /></label>
+        <label>Км в пакете<input data-fin-km inputmode="numeric" value="${row.cityKmThreshold??''}" placeholder="${esc(String(fin.cityKmThreshold??100))}" /></label>
+        <label>₽/км сверх<input data-fin-kmrate inputmode="decimal" value="${row.ratePerKm||''}" placeholder="${esc(String(fin.defaultRatePerKmCash||80))}" /></label>
+        <label>₽/км КАД<input data-fin-kad inputmode="decimal" value="${row.ratePerKmKad||''}" placeholder="${esc(String(fin.ratePerKmOutsideKad||''))}" /></label>
+      </div>
+    </div>
+  </details>`;
+}
+function cabinetTariffRulesForEdit(fin, companyId){
+  const rules=Array.isArray(fin.tariffRules)&&fin.tariffRules.length?fin.tariffRules.slice():[];
+  if(rules.length) return rules;
+  const by=fin.byType||{};
+  (typeof cabinetTariffTypes==='function'?cabinetTariffTypes(companyId):[]).forEach(t=>{
+    rules.push(Object.assign({bodyTypeId:t.id, id:t.id}, by[t.id]||{}));
+  });
+  if(!rules.length&&(fin.defaultRatePerHourWork>0||fin.payloadToTons>0)){
+    rules.push({
+      id:typeof uuid==='function'?uuid():'legacy-light',
+      bodyTypeId:'board',
+      payloadFromTons:fin.payloadFromTons||0,
+      payloadToTons:fin.payloadToTons||5,
+      lengthFromM:fin.lengthFromM||0,
+      lengthToM:fin.lengthToM||0,
+      ratePerHour:fin.defaultRatePerHourWork||0,
+      minWorkHours:fin.minWorkHours,
+      podachaHours:fin.podachaHours,
+      podachaEmptyKmLimit:fin.podachaEmptyKmLimit,
+      cityKmThreshold:fin.cityKmThreshold,
+      ratePerKm:fin.defaultRatePerKmCash,
+      ratePerKmKad:fin.ratePerKmOutsideKad||0
+    });
+  }
+  return rules;
+}
+function cabinetTypeTariffRowsHtml(fin, companyId){
+  const rules=cabinetTariffRulesForEdit(fin, companyId);
+  const inner=finRulesGroupsInnerHtml(rules, fin, null);
+  return `<h3 class="form-section-title" style="margin-top:14px;font-size:1rem">Карточки тарифа</h3>
+    <p class="cat-panel-hint">Карточки сгруппированы: бортовые, тент, фургоны… «Копировать» — новая карточка с теми же ставками (измените габариты). Пустой ₽/час — тариф не применится.</p>
+    <div class="row fin-rules-toolbar" style="align-items:center;gap:10px;margin-top:8px;flex-wrap:wrap">
+      <button type="button" class="secondary" id="fin-filter-open" style="width:auto;padding:6px 14px">Фильтр</button>
+      <span class="hint" id="fin-filter-active-hint"></span>
+    </div>
+    <div id="fin-rules-wrap">${inner||'<p class="hint">Нет правил — нажмите «+ правило тарифа».</p>'}</div>
+    <button type="button" class="secondary cat-add-btn" id="fin-add-rule" style="margin-top:8px;width:auto">+ правило тарифа</button>`;
+}
 function openCatalogs(){
   if(!currentAdmin){ fillAdminLoginSelect(); show('admin-pin'); return; }
   document.querySelectorAll('.admin-nav-item[data-nav]').forEach(b=>{
@@ -4804,13 +6306,21 @@ function openCatalogs(){
   }
   const companies=(state.companies||[]).filter(companyInMySpace);
   const fleetCo=typeof catalogFleetCompany==='function'?catalogFleetCompany():currentOwnCompany();
+  const CATALOG_VEH_DIM_FILTER_KEY='armada_catalog_veh_dim_filter_v1';
+  if(state.catalogVehiclesDimOnly==null){
+    try{ state.catalogVehiclesDimOnly=localStorage.getItem(CATALOG_VEH_DIM_FILTER_KEY)==='1'; }catch(_){ state.catalogVehiclesDimOnly=false; }
+  }
+  const fleetVehAll=(state.vehicles||[]).filter(v=>fleetCo&&v.companyId===fleetCo.id);
+  const vehDimMissingCount=fleetVehAll.filter(v=>typeof vehicleHasMissingDimensions==='function'&&vehicleHasMissingDimensions(v)).length;
   const drivers=(state.drivers||[]).map((d,i)=>({d,i})).filter(({d})=>{
     if(!fleetCo) return false;
     return d.companyId===fleetCo.id;
   });
   const vehicles=(state.vehicles||[]).map((v,i)=>({v,i})).filter(({v})=>{
     if(!fleetCo) return false;
-    return v.companyId===fleetCo.id;
+    if(v.companyId!==fleetCo.id) return false;
+    if(state.catalogVehiclesDimOnly&&typeof vehicleHasMissingDimensions==='function'&&!vehicleHasMissingDimensions(v)) return false;
+    return true;
   });
   const allCabinets=typeof catalogAllCabinetsOpen==='function'&&catalogAllCabinetsOpen();
   const catalogHint=allCabinets
@@ -4881,26 +6391,29 @@ function openCatalogs(){
       :(ivs.length?`<span class="svc-badge svc-ok">ТО ок</span>`:''));
     const logsN=(v.maintenanceLogs||[]).length;
     const vid=v.id||('idx-'+i);
-    return `<div class="item-card">
+    const assignWarn=typeof vehicleAssignBlockHint==='function'?vehicleAssignBlockHint(v):'';
+    const dimWarn=typeof vehicleAssignDimensionWarnHint==='function'?vehicleAssignDimensionWarnHint(v):'';
+    return `<div class="item-card"${dimWarn?' data-veh-dim-missing="1"':''}>
       <div class="item-top">
-        <div class="item-name" title="${esc(coName||v.plate)}">${esc(v.plate)}</div>
+        <div class="item-name" title="${esc(coName||v.plate)}">${esc(v.plate)}${dimWarn?' <span class="chip warn" title="'+esc(dimWarn)+'">нет габаритов</span>':''}</div>
         <div class="item-actions" style="flex:0 0 auto;gap:4px">
           <button type="button" class="icon-btn danger" data-del-veh="${i}" title="Удалить">×</button>
         </div>
       </div>
+      ${assignWarn?`<p class="veh-assign-block-hint">${esc(assignWarn)}</p>`:''}
+      ${dimWarn&&!assignWarn?`<p class="veh-assign-dim-hint">⚠ ${esc(dimWarn)}</p>`:''}
       <div class="meta" style="font-size:.65rem;color:var(--muted)">${esc([coName,spec,vehicleCrewSummary(v)].filter(Boolean).join(' · ')||'укажите тип, т и габариты')}${v.stsPhoto?' · СТС 📄':''}${svcHint?' · ':''}${svcHint}${logsN?` · записей ${logsN}`:''}</div>
       <div class="veh-specs veh-specs--wide">
-        <select id="veh-body-${i}" title="Тип кузова" class="veh-body-select">${fleetBodyTypeOptionsHtml(v.bodyTypeId)}</select>
-        <input id="veh-pay-${i}" inputmode="decimal" placeholder="т" title="Грузоподъёмность, т" value="${v.payloadTons??''}" />
+        <label class="required veh-spec-label" for="veh-body-${i}">Тип</label><select id="veh-body-${i}" title="Тип кузова" class="veh-body-select">${fleetBodyTypeOptionsHtml(v.bodyTypeId)}</select>
+        <label class="required veh-spec-label" for="veh-pay-${i}">т</label><input id="veh-pay-${i}" inputmode="decimal" placeholder="т" title="Грузоподъёмность, т" value="${v.payloadTons??''}" />
         <label class="check veh-trailer-check" title="С прицепом"><input type="checkbox" data-veh-trailer-toggle="${i}" id="veh-trailer-${i}" ${v.hasTrailer?'checked':''}/> Прицеп</label>
         <span data-veh-trailer-plate-wrap="${i}" class="veh-trailer-plate-wrap"${v.hasTrailer?'':' hidden'}>
           <input id="veh-trailer-plate-${i}" placeholder="№ прицепа" title="Госномер прицепа" value="${esc(v.trailerPlate||'')}" />
         </span>
-        <input id="veh-l-${i}" inputmode="decimal" placeholder="Д" title="Длина, м" value="${v.bodyLengthM??''}" />
-        <input id="veh-w-${i}" inputmode="decimal" placeholder="Ш" title="Ширина, м" value="${v.bodyWidthM??''}" />
-        <input id="veh-h-${i}" inputmode="decimal" placeholder="В" title="Высота, м" value="${v.bodyHeightM??''}" />
-        <input id="veh-${i}" inputmode="decimal" placeholder="л" title="л/100" value="${v.consumptionPer100Km??''}" />
-        <span class="hint" style="margin:0">л/100</span>
+        <label class="required veh-spec-label" for="veh-l-${i}">Д</label><input id="veh-l-${i}" inputmode="decimal" placeholder="Д" title="Длина, м" value="${v.bodyLengthM??''}" />
+        <label class="required veh-spec-label" for="veh-w-${i}">Ш</label><input id="veh-w-${i}" inputmode="decimal" placeholder="Ш" title="Ширина, м" value="${v.bodyWidthM??''}" />
+        <label class="required veh-spec-label" for="veh-h-${i}">В</label><input id="veh-h-${i}" inputmode="decimal" placeholder="В" title="Высота, м" value="${v.bodyHeightM??''}" />
+        <label class="veh-spec-label" for="veh-${i}">л/100</label><input id="veh-${i}" inputmode="decimal" placeholder="л" title="л/100" value="${v.consumptionPer100Km??''}" />
       </div>
       <button type="button" class="primary cat-add-btn" data-save-veh="${i}" style="margin-top:6px">Сохранить</button>
       <button type="button" class="secondary cat-add-btn" data-open-veh="${esc(vid)}" style="margin-top:4px">Ремонт и ТО</button>
@@ -4963,16 +6476,21 @@ function openCatalogs(){
         const hint=active
           ? `Авто «${esc(active.name)}»: тип кузова, тоннаж, прицеп — ниже. После изменений нажмите «Сохранить». «Ремонт и ТО» — сервис.`
           : (allCabinets?'Выберите компанию с парком':'Сначала нужна ваша фирма');
-        return `${firmPick}<p class="cat-panel-hint">${hint}</p>`;
+        const dimBtn=`<button type="button" class="secondary${state.catalogVehiclesDimOnly?' on':''}" id="veh-dim-filter" style="width:auto;padding:6px 12px;margin:6px 0" title="Только машины без длины/ширины/высоты кузова в справочнике">Без габаритов${vehDimMissingCount?` (${vehDimMissingCount})`:''}</button>`;
+        return `${firmPick}<p class="cat-panel-hint">${hint}</p>${dimBtn}`;
       })()}
       <div class="cat-quick">
         <div class="row">
-          <input id="own-veh-plate" placeholder="Госномер" style="flex:1.5" />
+          <label class="required svc-full" for="own-veh-plate">Госномер</label>
+          <input id="own-veh-plate" placeholder="А123BC77" style="flex:1.5" />
+          <label class="veh-spec-label" for="own-veh-cons">л/100</label>
           <input id="own-veh-cons" inputmode="decimal" value="20" placeholder="л/100" title="л/100 км" style="flex:0 0 56px;text-align:center" />
           <button type="button" class="icon-btn ok" id="own-veh-add" title="Добавить">+</button>
         </div>
         <div class="row" style="margin-top:4px">
+          <label class="required" for="own-veh-body">Тип кузова</label>
           <select id="own-veh-body" style="flex:1.2" title="Тип кузова">${fleetBodyTypeOptionsHtml('')}</select>
+          <label class="required" for="own-veh-pay">т</label>
           <input id="own-veh-pay" inputmode="decimal" placeholder="т" title="Грузоподъёмность" style="flex:0 0 56px;text-align:center" />
           <label class="check" title="С прицепом"><input type="checkbox" id="own-veh-trailer" data-veh-trailer-toggle="own-add"/> Прицеп</label>
         </div>
@@ -4980,8 +6498,11 @@ function openCatalogs(){
           <input id="own-veh-trailer-plate" placeholder="Госномер прицепа" style="flex:1" />
         </div>
         <div class="row" style="margin-top:4px">
+          <label class="required" for="own-veh-l">Д, м</label>
           <input id="own-veh-l" inputmode="decimal" placeholder="Д, м" style="flex:1;text-align:center" />
+          <label class="required" for="own-veh-w">Ш, м</label>
           <input id="own-veh-w" inputmode="decimal" placeholder="Ш, м" style="flex:1;text-align:center" />
+          <label class="required" for="own-veh-h">В, м</label>
           <input id="own-veh-h" inputmode="decimal" placeholder="В, м" style="flex:1;text-align:center" />
         </div>
       </div>
@@ -4997,23 +6518,15 @@ function openCatalogs(){
           ? `<label class="svc-full">Фирма<select id="fin-company">${owns.map(c=>`<option value="${esc(c.id)}" ${finCo&&c.id===finCo.id?'selected':''}>${esc(c.name)}</option>`).join('')}</select></label>`
           : `<p class="cat-panel-hint">Тариф фирмы: <b>${esc((finCo&&finCo.name)||'—')}</b></p>`;
         return `
-      <p class="cat-panel-hint">Свои настройки у каждой «нашей фирмы». Пакет = часы работы + подача; км в пакете = груз + после.</p>
+      <p class="cat-panel-hint">Ставки ₽/час, км и габариты — в <strong>карточках тарифа</strong> ниже.</p>
+      <h3 class="form-section-title" style="margin-top:8px;font-size:1rem">Общие настройки</h3>
       <div class="fin-grid" style="margin-top:4px">
         ${firmPick}
-        <label>Наценка, %<input id="fin-markup" inputmode="decimal" value="${fin.markupPercent??15}" /></label>
-        <label>Км в пакете<input id="fin-city" inputmode="numeric" value="${fin.cityKmThreshold??100}" /></label>
-        <label>Часы работы<input id="fin-minwork" inputmode="decimal" value="${fin.minWorkHours??4}" /></label>
-        <label>Подача, ч<input id="fin-podacha" inputmode="decimal" value="${fin.podachaHours??1}" /></label>
-        <label>Нулевой до, км<input id="fin-podacha-km" inputmode="numeric" value="${fin.podachaEmptyKmLimit??20}" title="Свыше — +1 ч подачи" /></label>
-        <label>₽/час<input id="fin-perhour" inputmode="decimal" value="${fin.defaultRatePerHourWork||''}" /></label>
-        <label>₽/км сверх<input id="fin-perkm" inputmode="decimal" value="${fin.defaultRatePerKmCash||80}" /></label>
-        <label>Реф ×<input id="fin-reefer" inputmode="decimal" value="${fin.bodyMultReefer??1.25}" title="Надбавка рефрижератор / продукты" /></label>
-        <label>Самосвал ×<input id="fin-dump" inputmode="decimal" value="${fin.bodyMultDump??1.15}" /></label>
-        <label>От т<input id="fin-heavy-t" inputmode="decimal" value="${fin.heavyTonsFrom??20}" /></label>
-        <label>Тяжёлые ×<input id="fin-heavy" inputmode="decimal" value="${fin.heavyMult??1.15}" /></label>
-        <label title="Наценка заказчику за срочный подбор логистом">Ставка логиста, %<input id="fin-logist-fee" inputmode="decimal" value="${fin.logistFeePercent??10}" /></label>
-        <button class="primary cat-add-btn fin-full" id="fin-save">Сохранить тариф фирмы</button>
-      </div>`;
+        <label title="Наценка к ценам перевозчика при расчёте для заказчика">Наценка, %<input id="fin-markup" inputmode="decimal" value="${fin.markupPercent??15}" /></label>
+        <label title="Наценка заказчику за подбор логистом">Ставка логиста, %<input id="fin-logist-fee" inputmode="decimal" value="${fin.logistFeePercent??10}" /></label>
+      </div>
+      ${cabinetTypeTariffRowsHtml(fin, finCo&&finCo.id)}
+      <button class="primary cat-add-btn fin-full" id="fin-save" style="margin-top:12px">Сохранить тариф фирмы</button>`;
       })()}
     </div>
 
@@ -5353,6 +6866,13 @@ function openCatalogs(){
         const num=id=>{ const raw=document.querySelector(`[data-${id}="${i}"]`)?.value||''; const n=+String(raw).replace(',','.'); return n>0?n:null; };
         return {id:v.id||uuid(), plate, makeModel, bodyTypeId, hasTrailer, trailerPlate, payloadTons:num('vpay'), bodyLengthM:num('vl'), bodyWidthM:num('vw'), bodyHeightM:num('vh')};
       }).filter(v=>v.plate);
+      for(const vv of vehicles){
+        const miss=typeof vehicleMissingRequiredParams==='function'?vehicleMissingRequiredParams(vv):[];
+        if(miss.length){
+          alert(typeof vehicleRequiredParamsMessage==='function'?vehicleRequiredParamsMessage(miss):('Заполните: '+miss.join(', ')));
+          return;
+        }
+      }
       drivers=drivers.map((d,i)=>{
         const name=(document.querySelector(`[data-dn="${i}"]`)?.value||'').trim();
         const phone=formatPhone((document.querySelector(`[data-dp="${i}"]`)?.value||'').trim());
@@ -5495,16 +7015,13 @@ function openCatalogs(){
     const bodyLengthM=numOrNull(($('own-veh-l')||{}).value);
     const bodyWidthM=numOrNull(($('own-veh-w')||{}).value);
     const bodyHeightM=numOrNull(($('own-veh-h')||{}).value);
-    if(!(payloadTons>0)){ alert('Укажите грузоподъёмность (т) — нужна для биржи'); return; }
-    if(!bodyTypeId){ alert('Выберите тип кузова'); return; }
+    const draft={plate, consumptionPer100Km:cons, payloadTons, bodyTypeId, hasTrailer:trailer.hasTrailer, trailerPlate:trailer.trailerPlate, bodyLengthM, bodyWidthM, bodyHeightM, makeModel:''};
+    if(!assertFleetVehicleRequired(draft, fleetVehicleFieldIdsAdd(), $('catalogs-form'))) return;
     if(!validateFleetTrailer(trailer)) return;
-    state.vehicles.push(normalizeFleetVehicle({
-      plate, consumptionPer100Km:cons, payloadTons, bodyTypeId,
-      hasTrailer:trailer.hasTrailer, trailerPlate:trailer.trailerPlate,
-      bodyLengthM, bodyWidthM, bodyHeightM, makeModel:'',
+    state.vehicles.push(normalizeFleetVehicle(Object.assign({}, draft, {
       spaceId:fleetSpace, companyId, companyName,
       serviceIntervals:[], maintenanceLogs:[]
-    }));
+    })));
     bumpDataEpoch('add-vehicle');
     persist(); openCatalogs();
     flashCatOk();
@@ -5568,23 +7085,39 @@ function openCatalogs(){
       openCatalogs();
     };
   }
+  const vehDimFilter=$('veh-dim-filter');
+  if(vehDimFilter){
+    vehDimFilter.onclick=()=>{
+      state.catalogVehiclesDimOnly=!state.catalogVehiclesDimOnly;
+      try{ localStorage.setItem(CATALOG_VEH_DIM_FILTER_KEY, state.catalogVehiclesDimOnly?'1':'0'); }catch(_){}
+      catalogTab='vehicles';
+      openCatalogs();
+    };
+  }
+  wireFinRuleButtons();
+  $('fin-filter-open')&&($('fin-filter-open').onclick=()=>openFinTariffFilterModal());
+  $('fin-add-rule')&&($('fin-add-rule').onclick=()=>{
+    const finCo=catalogFinanceCompany();
+    const fin=finCo?financeForCompanyId(finCo.id):normalizeFinance(state.finance);
+    const wrap=$('fin-rules-wrap');
+    if(!wrap) return;
+    const empty=wrap.querySelector('.hint');
+    if(empty) empty.remove();
+    const rules=readCabinetTariffRulesFromDom();
+    rules.push({id:typeof uuid==='function'?uuid():String(Date.now()), bodyTypeId:'board'});
+    wrap.innerHTML=finRulesGroupsInnerHtml(rules, fin, new Set([rules[rules.length-1].id]));
+    wireFinRuleButtons();
+  });
   $('fin-save')&&($('fin-save').onclick=()=>{
     const co=catalogFinanceCompany();
     if(!co){ alert('Нет «нашей фирмы» для тарифа'); return; }
-    const next=normalizeFinance({
+    const prev=financeForCompanyId(co.id);
+    const next=normalizeFinance(Object.assign({}, prev, {
       markupPercent:+(($('fin-markup').value||'').replace(',','.')),
-      cityKmThreshold:+(($('fin-city').value||'').replace(/\D/g,'')),
-      minWorkHours:+(($('fin-minwork').value||'').replace(',','.')),
-      podachaHours:+(($('fin-podacha').value||'').replace(',','.')),
-      podachaEmptyKmLimit:+(($('fin-podacha-km').value||'').replace(/\D/g,'')),
-      defaultRatePerHourWork:+(($('fin-perhour').value||'').replace(',','.')),
-      defaultRatePerKmCash:+(($('fin-perkm').value||'').replace(',','.')),
-      bodyMultReefer:+(($('fin-reefer')||{}).value||'').replace(',','.')||1.25,
-      bodyMultDump:+(($('fin-dump')||{}).value||'').replace(',','.')||1.15,
-      heavyTonsFrom:+(($('fin-heavy-t')||{}).value||'').replace(',','.')||20,
-      heavyMult:+(($('fin-heavy')||{}).value||'').replace(',','.')||1.15,
-      logistFeePercent:+(($('fin-logist-fee')||{}).value||'').replace(',','.')
-    });
+      logistFeePercent:+(($('fin-logist-fee')||{}).value||'').replace(',','.'),
+      tariffRules:readCabinetTariffRulesFromDom(),
+      byType:readCabinetTypeTariffs()
+    }));
     co.finance=next;
     // глобальный state.finance — запасной для старых заказов без ownCompanyId
     const my=currentOwnCompany();

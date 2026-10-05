@@ -186,7 +186,7 @@ function dayKeyFromIso(iso){
   if(Number.isNaN(d.getTime())) return '';
   return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
 }
-const APP_BUILD="2026-10-04-hotfix-no-super-recovery";
+const APP_BUILD=(typeof globalThis!=='undefined'&&globalThis.ARMADA_APP_BUILD)||'2026-10-05-pr158-f1';
 /** Корпоративная почта @armada.sx (biz.mail.ru; алиасы → info@armada.sx). */
 const ARMADA_MAIL={
   info:'info@armada.sx',
@@ -209,7 +209,9 @@ function normalizeEntryMode(v){
 }
 function readEntryFromUrl(){
   try{
-    const q=new URLSearchParams(location.search||'');
+    const q=(typeof URLSearchParams!=='undefined')
+      ?new URLSearchParams(location.search||'')
+      :{get:()=>null};
     const fromQ=normalizeEntryMode(q.get('entry'));
     if(fromQ) return fromQ;
     const path=(location.pathname||'').toLowerCase();
@@ -430,8 +432,10 @@ function clearAdminPinOk(){
   try{ sessionStorage.removeItem(ADMIN_PIN_OK_KEY); }catch(_){}
 }
 function canAutoRestoreAdmin(){
-  if(adminEntryRequiresPin() && !isAdminPinOk()) return false;
-  return typeof restoreAdminSession==='function' && restoreAdminSession();
+  if(typeof restoreAdminSession!=='function') return false;
+  if(!restoreAdminSession()) return false;
+  if(adminEntryRequiresPin()) markAdminPinOk();
+  return true;
 }
 function reconcileAdminSessionAfterSync(){
   if(typeof currentAdmin==='undefined' || !currentAdmin) return;
@@ -494,6 +498,73 @@ const ARMADA_SX_ORDER_VTYPES=[
   {id:'tral', label:'Трал'},
   {id:'board', label:'Бортовой'}
 ];
+/** Типовые т/габариты кузова для заявок с order.html (подбор ТС; логист может поправить). */
+const ARMADA_SX_VTYPE_DEFAULT_REQS={
+  shalanda:{reqPayloadTons:20,reqLengthM:13.6,reqWidthM:2.45,reqHeightM:2.5},
+  manipulator:{reqPayloadTons:5,reqLengthM:6,reqWidthM:2.4,reqHeightM:2.2},
+  tent:{reqPayloadTons:20,reqLengthM:13.6,reqWidthM:2.45,reqHeightM:2.7},
+  dump:{reqPayloadTons:15,reqLengthM:6.5,reqWidthM:2.3,reqHeightM:1.5},
+  tral:{reqPayloadTons:40,reqLengthM:13.6,reqWidthM:2.5,reqHeightM:0.6},
+  board:{reqPayloadTons:10,reqLengthM:6,reqWidthM:2.4,reqHeightM:2.2}
+};
+/** Высота пола кузова/платформы от дороги, м (ориентир для проверки 4 м с грузом). */
+const ARMADA_SX_VTYPE_DECK_HEIGHT_M={
+  shalanda:1.15, manipulator:0.55, tent:1.15, dump:1.2, tral:0.85, board:0.9
+};
+const ARMADA_ROAD_MAX_HEIGHT_M=4;
+const ARMADA_ROAD_HEIGHT_LIMIT_M=3.95;
+function armadaVtypeDeckHeightM(vtypeId){
+  const id=String(vtypeId||'').trim();
+  if(id&&ARMADA_SX_VTYPE_DECK_HEIGHT_M[id]>0) return ARMADA_SX_VTYPE_DECK_HEIGHT_M[id];
+  return 1;
+}
+function armadaCargoRoadHeightViolation(vtypeId, cargoHeightM){
+  const cargo=+cargoHeightM;
+  if(!(cargo>0)) return null;
+  const deck=armadaVtypeDeckHeightM(vtypeId);
+  const sum=Math.round((deck+cargo)*100)/100;
+  if(sum<=ARMADA_ROAD_HEIGHT_LIMIT_M) return null;
+  return {deck, cargo, sum, limit:ARMADA_ROAD_MAX_HEIGHT_M};
+}
+function armadaHeightRoadWarningText(v){
+  if(!v) return '';
+  const d=String(v.deck).replace('.',',');
+  const c=String(v.cargo).replace('.',',');
+  const s=String(v.sum).replace('.',',');
+  return `Пол кузова ${d} м + высота груза ${c} м = ${s} м. По приложению № 1 к Правилам перевозок грузов (постановление Правительства РФ № 2200 от 21.12.2020) допустимая высота транспортного средства с грузом — не более 4 м от поверхности дороги.\n\nВам требуется негабаритная перевозка (разрешение и маршрут). Выберите другой тип ТС, если изменение высоты груза не допустимо.`;
+}
+function applyVehicleTypeDefaultReqs(o, onlyEmpty){
+  if(!o||typeof o!=='object') return o;
+  const vtid=(Array.isArray(o.vehicleTypeIds)&&o.vehicleTypeIds[0])||'';
+  const def=ARMADA_SX_VTYPE_DEFAULT_REQS[vtid]||null;
+  if(!def) return o;
+  const fill=(k,v)=>{
+    if(!(v>0)) return;
+    if(onlyEmpty && (o[k]>0)) return;
+    o[k]=v;
+  };
+  fill('reqPayloadTons', def.reqPayloadTons);
+  fill('reqLengthM', def.reqLengthM);
+  fill('reqWidthM', def.reqWidthM);
+  fill('reqHeightM', def.reqHeightM);
+  if(!o.reqBodyType&&typeof mapVtypeToBodyType==='function') o.reqBodyType=mapVtypeToBodyType(vtid);
+  if(!(o.cargoVolumeM3>0)&&o.reqLengthM>0&&o.reqWidthM>0&&o.reqHeightM>0){
+    o.cargoVolumeM3=Math.round(o.reqLengthM*o.reqWidthM*o.reqHeightM*10)/10;
+  }
+  return o;
+}
+function migrateArmadaSxOrderReqs(){
+  let changed=false;
+  (state.orders||[]).forEach(o=>{
+    if(!o||o.source!=='armada_sx') return;
+    const before=JSON.stringify([o.reqPayloadTons,o.reqLengthM,o.reqWidthM,o.reqHeightM,o.cargoVolumeM3]);
+    applyVehicleTypeDefaultReqs(o, true);
+    const after=JSON.stringify([o.reqPayloadTons,o.reqLengthM,o.reqWidthM,o.reqHeightM,o.cargoVolumeM3]);
+    if(before!==after) changed=true;
+  });
+  if(changed) bumpDataEpoch('armada-sx-req-defaults');
+  return changed;
+}
 function armadaPublicOrderUrl(opts){
   const o=opts&&typeof opts==='object'?opts:{};
   const origin=(typeof location!=='undefined'&&location.origin)?location.origin:ARMADA_LIVE_ORIGIN;
@@ -619,7 +690,7 @@ const ATI_BODY_TYPES=[
   {id:"cargo_passenger",ati:"грузопассажирский",label:"грузопассажирский",mapTo:"board",keywords:["грузпас.","dual-purpose","грузопассажирский"]},
   {id:"pole_truck",ati:"клюшковоз",label:"клюшковоз",mapTo:"board",keywords:["клюшк.","klyushkovoz","клюшковоз"]},
   {id:"garbage_truck",ati:"мусоровоз",label:"мусоровоз",mapTo:"board",keywords:["мусор.","garbage truck","мусоровоз"]},
-  {id:"jumbo",ati:"jumbo",label:"jumbo",mapTo:"board",keywords:["jumbo"]},
+  {id:"jumbo",ati:"jumbo",label:"Джамбо",mapTo:"board",keywords:["jumbo"]},
   {id:"tank_cont_20",ati:"20' танк-контейнер",label:"20' танк-контейнер",mapTo:"board",keywords:["20' танк-конт.","20' tank-container","20' танк-контейнер"]},
   {id:"tank_cont_40",ati:"40' танк-контейнер",label:"40' танк-контейнер",mapTo:"board",keywords:["40' танк-конт.","40' tank-container","40' танк-контейнер"]},
   {id:"mega_truck",ati:"мега фура",label:"мега фура",mapTo:"board",keywords:["мега","mega","мега фура"]},
@@ -643,7 +714,12 @@ function filterCustVehicleTypesByQuery(q){
 }
 function bodyTypeInputLabel(id){
   const hit=ATI_BODY_TYPES.find(x=>x.id===id)||BODY_TYPES.find(x=>x.id===id);
-  return hit?(hit.ati||hit.label):'';
+  return hit?(hit.label||hit.ati):'';
+}
+function custVehicleTypeDisplayLabel(idOrType){
+  const t=typeof idOrType==='object'&&idOrType? idOrType : custVehicleTypeMeta(idOrType);
+  if(t) return t.label||t.ati||t.id||'';
+  return typeof bodyTypeInputLabel==='function'?bodyTypeInputLabel(idOrType):String(idOrType||'');
 }
 /** Типы ТС в форме заказчика (группа «все закрытые»). */
 const CUST_CLOSED_VEHICLE_TYPES=[
@@ -781,14 +857,68 @@ function bodyTypeOrderMatch(a, b){
 }
 /** ТС подходит по типу кузова: vehicleTypeIds или reqBodyType (точный id или группа tent/board/reefer/dump). */
 function vehicleBodyTypeMatchesOrder(v, o){
-  if(!v||!o) return true;
+  if(!v||!o) return false;
   const vtypes=Array.isArray(o.vehicleTypeIds)?o.vehicleTypeIds.filter(Boolean):[];
   const req=String(o.reqBodyType||'').trim();
   if(!vtypes.length && !req) return true;
   const vid=String(v.bodyTypeId||'').trim();
-  if(!vid) return !vtypes.length && !req;
+  if(!vid) return false;
   if(vtypes.length) return vtypes.some(tid=>bodyTypeOrderMatch(tid, vid));
   return bodyTypeOrderMatch(req, vid);
+}
+const VEHICLE_ASSIGN_BLOCK_PARAM_KEYS=['госномер','тип кузова','грузоподъёмность'];
+const VEHICLE_DIMENSION_PARAM_KEYS=['длина кузова','ширина кузова','высота кузова'];
+/** Незаполненные обязательные параметры ТС (справочник «Авто», полный список). */
+function vehicleMissingRequiredParams(v){
+  if(!v) return VEHICLE_ASSIGN_BLOCK_PARAM_KEYS.concat(VEHICLE_DIMENSION_PARAM_KEYS);
+  const miss=[];
+  if(!String(v.plate||'').trim()) miss.push('госномер');
+  if(!String(v.bodyTypeId||'').trim()) miss.push('тип кузова');
+  if(!(+v.payloadTons>0)) miss.push('грузоподъёмность');
+  if(!(+v.bodyLengthM>0)) miss.push('длина кузова');
+  if(!(+v.bodyWidthM>0)) miss.push('ширина кузова');
+  if(!(+v.bodyHeightM>0)) miss.push('высота кузова');
+  return miss;
+}
+/** Без этого назначать нельзя (госномер, тип, тоннаж). */
+function vehicleMissingAssignBlockParams(v){
+  return vehicleMissingRequiredParams(v).filter(k=>VEHICLE_ASSIGN_BLOCK_PARAM_KEYS.includes(k));
+}
+function vehicleHasMissingDimensions(v){
+  if(!v) return true;
+  return !(+v.bodyLengthM>0) || !(+v.bodyWidthM>0) || !(+v.bodyHeightM>0);
+}
+function vehicleAssignDimensionWarnHint(v){
+  return vehicleHasMissingDimensions(v)?'Габариты не указаны — проверьте вручную':'';
+}
+const VEHICLE_REQUIRED_PARAM_PHRASE={
+  'госномер':'нет госномера',
+  'тип кузова':'нет типа кузова',
+  'грузоподъёмность':'нет грузоподъёмности',
+  'длина кузова':'нет длины кузова',
+  'ширина кузова':'нет ширины кузова',
+  'высота кузова':'нет высоты кузова'
+};
+/** «нет типа кузова, …» — из vehicleMissingRequiredParams. */
+function vehicleMissingRequiredPhrases(v){
+  return vehicleMissingRequiredParams(v).map(k=>VEHICLE_REQUIRED_PARAM_PHRASE[k]||('нет '+k));
+}
+/** Пометка для назначения / подбора ТС (только блокирующие поля). */
+function vehicleAssignBlockHint(v){
+  const parts=vehicleMissingAssignBlockParams(v).map(k=>VEHICLE_REQUIRED_PARAM_PHRASE[k]||('нет '+k));
+  return parts.length?('⚠ Нельзя назначить: '+parts.join(', ')):'';
+}
+function vehicleRequiredParamsMessage(missing){
+  const m=Array.isArray(missing)?missing.filter(Boolean):vehicleMissingRequiredParams(missing);
+  return m.length?`Заполните: ${m.join(', ')}`:'';
+}
+function orderHasVehicleRequirements(o){
+  if(!o) return false;
+  if(+(o.reqPayloadTons)>0) return true;
+  if(+(o.reqLengthM)>0||+(o.reqWidthM)>0||+(o.reqHeightM)>0) return true;
+  if(String(o.reqBodyType||'').trim()) return true;
+  if(Array.isArray(o.vehicleTypeIds)&&o.vehicleTypeIds.some(Boolean)) return true;
+  return false;
 }
 function cargoKindLabel(id){
   return (CARGO_KINDS.find(x=>x.id===id)||{}).label||'';
@@ -1017,6 +1147,85 @@ function uuid(){
     return v.toString(16);
   });
 }
+/** Единый формат: +7XXXXXXXXXX — order.html грузит только store.js (без app.js). */
+function formatPhone(raw){
+  let d=String(raw??'').replace(/\D/g,'');
+  if(!d) return '';
+  if(d.length===11 && d[0]==='8') d='7'+d.slice(1);
+  if(d.length===10) d='7'+d;
+  if(d.length===11 && d[0]==='7') return '+'+d;
+  if(d.length>11 && d[0]==='7') return '+'+d.slice(0,11);
+  if(d.length>=10) return '+7'+d.slice(-10);
+  return '';
+}
+function numOrNull(raw){
+  const n=+String(raw??'').replace(',','.');
+  return (n>0 && !Number.isNaN(n))?n:null;
+}
+/** Минимальная нормализация ТС для initCloudSync на публичной форме. */
+function normalizeFleetVehicle(v){
+  if(!v) return null;
+  const plate=String(v.plate||'').trim();
+  if(!plate) return null;
+  return {
+    id:v.id||uuid(),
+    plate,
+    consumptionPer100Km:(+v.consumptionPer100Km>0)?+v.consumptionPer100Km:20,
+    makeModel:String(v.makeModel||'').trim(),
+    payloadTons:numOrNull(v.payloadTons),
+    bodyLengthM:numOrNull(v.bodyLengthM),
+    bodyWidthM:numOrNull(v.bodyWidthM),
+    bodyHeightM:numOrNull(v.bodyHeightM),
+    bodyTypeId:v.bodyTypeId?String(v.bodyTypeId).trim():null,
+    hasTrailer:!!v.hasTrailer,
+    trailerPlate:v.hasTrailer?String(v.trailerPlate||'').trim():'',
+    spaceId:v.spaceId||null,
+    companyId:v.companyId||null,
+    companyName:v.companyName||null,
+    currentOdometer:numOrNull(v.currentOdometer),
+    stsSeries:String(v.stsSeries||'').trim(),
+    stsNumber:String(v.stsNumber||'').trim(),
+    stsPhoto:v.stsPhoto||null,
+    assignedDriverIds:(Array.isArray(v.assignedDriverIds)?v.assignedDriverIds:[]).map(String).filter(Boolean),
+    crewName:String(v.crewName||'').trim(),
+    serviceIntervals:Array.isArray(v.serviceIntervals)?v.serviceIntervals:[],
+    maintenanceLogs:Array.isArray(v.maintenanceLogs)?v.maintenanceLogs:[]
+  };
+}
+function normalizeAllPhones(){
+  let changed=false;
+  const fix=v=>{
+    const f=formatPhone(v);
+    if(!v && !f) return v||'';
+    if(f && f!==v){ changed=true; return f; }
+    return v||'';
+  };
+  (state.drivers||[]).forEach(d=>{
+    const next=fix(d.phone);
+    if(next!==(d.phone||'')) d.phone=next;
+  });
+  (state.companies||[]).forEach(c=>{
+    (c.phones||[]).forEach(p=>{ if(p && p.number!=null){ const n=fix(p.number); if(n!==p.number) p.number=n; } });
+    (c.contacts||[]).forEach(ct=>{
+      (ct.phones||[]).forEach(p=>{ if(p && p.number!=null){ const n=fix(p.number); if(n!==p.number) p.number=n; } });
+      if(ct.phone){ const n=fix(ct.phone); if(n!==ct.phone){ ct.phone=n; changed=true; } }
+    });
+    (c.drivers||[]).forEach(d=>{
+      const n=fix(d.phone); if(n!==(d.phone||'')) d.phone=n;
+    });
+  });
+  (state.orders||[]).forEach(o=>{
+    if(o.contactPhone!=null){ const n=fix(o.contactPhone); if(n!==o.contactPhone){ o.contactPhone=n; changed=true; } }
+    if(o.loadingContactPhone!=null){ const n=fix(o.loadingContactPhone); if(n!==o.loadingContactPhone){ o.loadingContactPhone=n; changed=true; } }
+    if(o.unloadingContactPhone!=null){ const n=fix(o.unloadingContactPhone); if(n!==o.unloadingContactPhone){ o.unloadingContactPhone=n; changed=true; } }
+    if(o.driverPhone!=null){ const n=fix(o.driverPhone); if(n!==o.driverPhone){ o.driverPhone=n; changed=true; } }
+    if(o.transportApp && o.transportApp.driverPhone!=null){
+      const n=fix(o.transportApp.driverPhone);
+      if(n!==o.transportApp.driverPhone){ o.transportApp.driverPhone=n; changed=true; }
+    }
+  });
+  return changed;
+}
 /** Общая база на VPS; с GitHub Pages тоже ходим сюда (нужен HTTP-сайт приложения). */
 const PB_BASE=(function(){
   const h=location.hostname;
@@ -1025,7 +1234,7 @@ const PB_BASE=(function(){
 })();
 console.info("АРМАДА build", APP_BUILD, "PB", PB_BASE);
 const saved=JSON.parse(localStorage.getItem(KEY)||localStorage.getItem(OLD_KEY)||"{}");
-const DEFAULT_FINANCE={markupPercent:15,cityKmThreshold:100,suburbKmThreshold:30,minWorkHours:4,podachaHours:1,podachaEmptyKmLimit:20,defaultRatePerHourWork:0,defaultRatePerKmCash:80,bodyMultReefer:1.25,bodyMultDump:1.15,heavyTonsFrom:20,heavyMult:1.15,logistFeePercent:10};
+const DEFAULT_FINANCE={markupPercent:15,cityKmThreshold:100,suburbKmThreshold:30,minWorkHours:4,podachaHours:1,podachaEmptyKmLimit:20,defaultRatePerHourWork:0,defaultRatePerKmCash:80,ratePerKmOutsideKad:0,payloadFromTons:0,bodyMultReefer:1.25,bodyMultDump:1.15,heavyTonsFrom:20,heavyMult:1.15,logistFeePercent:10};
 function clampMult(v, fallback){
   const n=+v;
   if(!(n>0) || Number.isNaN(n)) return fallback;
@@ -1042,13 +1251,357 @@ function normalizeFinance(f){
   s.podachaEmptyKmLimit=(+s.podachaEmptyKmLimit>0)?+s.podachaEmptyKmLimit:20;
   s.defaultRatePerHourWork=(+s.defaultRatePerHourWork>0)?+s.defaultRatePerHourWork:0;
   s.defaultRatePerKmCash=(+s.defaultRatePerKmCash>0)?+s.defaultRatePerKmCash:80;
+  s.ratePerKmOutsideKad=(+s.ratePerKmOutsideKad>0)?+s.ratePerKmOutsideKad:0;
+  s.payloadFromTons=(+s.payloadFromTons>0)?+s.payloadFromTons:0;
+  s.payloadToTons=(+s.payloadToTons>0)?+s.payloadToTons:5;
+  s.lengthFromM=(+s.lengthFromM>0)?+s.lengthFromM:0;
+  s.lengthToM=(+s.lengthToM>0)?+s.lengthToM:0;
   s.bodyMultReefer=clampMult(s.bodyMultReefer, 1.25);
   s.bodyMultDump=clampMult(s.bodyMultDump, 1.15);
   s.heavyTonsFrom=(+s.heavyTonsFrom>0)?+s.heavyTonsFrom:20;
   s.heavyMult=clampMult(s.heavyMult, 1.15);
   let fee=+s.logistFeePercent; if(Number.isNaN(fee)) fee=10;
   s.logistFeePercent=Math.min(40, Math.max(0, fee));
+  const byType={};
+  const src=f&&f.byType&&typeof f.byType==='object'?f.byType:{};
+  Object.keys(src).forEach(id=>{
+    const row=src[id];
+    if(!row||typeof row!=='object') return;
+    const rate=+row.ratePerHour;
+    if(!(rate>0)) return;
+    const hours=+row.minWorkHours;
+    const podacha=+row.podachaHours;
+    const km=+row.cityKmThreshold;
+    const perKm=+row.ratePerKm;
+    const emptyLim=+row.podachaEmptyKmLimit;
+    const kad=+row.ratePerKmKad;
+    const fromTons=+row.payloadFromTons;
+    const toTons=+row.payloadToTons;
+    const lenFrom=+row.lengthFromM;
+    const lenTo=+row.lengthToM;
+    byType[String(id)]={
+      ratePerHour:rate,
+      payloadFromTons:(row.payloadFromTons===''||row.payloadFromTons==null||!(fromTons>0))?0:fromTons,
+      payloadToTons:(row.payloadToTons===''||row.payloadToTons==null||!(toTons>0))?0:toTons,
+      lengthFromM:(row.lengthFromM===''||row.lengthFromM==null||!(lenFrom>0))?0:lenFrom,
+      lengthToM:(row.lengthToM===''||row.lengthToM==null||!(lenTo>0))?0:lenTo,
+      minWorkHours:(row.minWorkHours===''||row.minWorkHours==null||Number.isNaN(hours))?s.minWorkHours:hours,
+      podachaHours:(row.podachaHours===''||row.podachaHours==null||Number.isNaN(podacha))?s.podachaHours:podacha,
+      podachaEmptyKmLimit:(row.podachaEmptyKmLimit===''||row.podachaEmptyKmLimit==null||!(emptyLim>0))?s.podachaEmptyKmLimit:emptyLim,
+      cityKmThreshold:(row.cityKmThreshold===''||row.cityKmThreshold==null||!(km>0))?s.cityKmThreshold:km,
+      ratePerKm:(row.ratePerKm===''||row.ratePerKm==null||!(perKm>0))?s.defaultRatePerKmCash:perKm,
+      ratePerKmKad:(row.ratePerKmKad===''||row.ratePerKmKad==null||!(kad>0))?0:kad
+    };
+  });
+  s.byType=byType;
+  const normRule=(row,fallbackBody)=>{
+    if(!row||typeof row!=='object') return null;
+    const rate=+row.ratePerHour;
+    const body=String(row.bodyTypeId||fallbackBody||'').trim();
+    return {
+      id:String(row.id||fallbackBody||uuid()).slice(0,40),
+      bodyTypeId:body,
+      payloadFromTons:(+row.payloadFromTons>0)?+row.payloadFromTons:0,
+      payloadToTons:(+row.payloadToTons>0)?+row.payloadToTons:0,
+      lengthFromM:(+row.lengthFromM>0)?+row.lengthFromM:0,
+      lengthToM:(+row.lengthToM>0)?+row.lengthToM:0,
+      widthM:(+row.widthM>0)?+row.widthM:0,
+      heightM:(+row.heightM>0)?+row.heightM:0,
+      ratePerHour:(rate>0)?rate:0,
+      minWorkHours:(+row.minWorkHours>=0)?+row.minWorkHours:s.minWorkHours,
+      podachaHours:(+row.podachaHours>=0)?+row.podachaHours:s.podachaHours,
+      podachaEmptyKmLimit:(+row.podachaEmptyKmLimit>0)?+row.podachaEmptyKmLimit:s.podachaEmptyKmLimit,
+      cityKmThreshold:(+row.cityKmThreshold>0)?+row.cityKmThreshold:s.cityKmThreshold,
+      ratePerKm:(+row.ratePerKm>0)?+row.ratePerKm:s.defaultRatePerKmCash,
+      ratePerKmKad:(+row.ratePerKmKad>0)?+row.ratePerKmKad:0
+    };
+  };
+  let tariffRules=Array.isArray(f&&f.tariffRules)?f.tariffRules.map(r=>normRule(r)).filter(Boolean):[];
+  if(!tariffRules.length){
+    Object.keys(byType).forEach(id=>{ const r=normRule(byType[id], id); if(r) tariffRules.push(r); });
+  }
+  s.tariffRules=tariffRules;
   return s;
+}
+/** Параметры для тарифа = требования груза; после назначения ТС — подставляем машину, если в заявке пусто. */
+function orderTariffDimensions(o){
+  if(!o) return {bodyGroup:'board', bodyTypeId:'', payloadTons:0, lengthM:0};
+  let payloadTons=+o.reqPayloadTons||0;
+  let lengthM=+o.reqLengthM||0;
+  const assigned=(o.vehiclePlate&&typeof vehicle==='function')?vehicle(o.vehiclePlate, o.ownCompanyId||null):null;
+  if(assigned){
+    if(!(payloadTons>0)&&+assigned.payloadTons>0) payloadTons=+assigned.payloadTons;
+    if(!(lengthM>0)&&+assigned.bodyLengthM>0) lengthM=+assigned.bodyLengthM;
+  }
+  let widthM=+o.reqWidthM||0;
+  let heightM=+o.reqHeightM||0;
+  if(assigned){
+    if(!(widthM>0)&&+assigned.bodyWidthM>0) widthM=+assigned.bodyWidthM;
+    if(!(heightM>0)&&+assigned.bodyHeightM>0) heightM=+assigned.bodyHeightM;
+  }
+  let vtypeId='';
+  if(Array.isArray(o.vehicleTypeIds)&&o.vehicleTypeIds[0]) vtypeId=String(o.vehicleTypeIds[0]).trim();
+  else if(o.vehicleTypeId) vtypeId=String(o.vehicleTypeId).trim();
+  const bodyGroup=String(o.reqBodyType||'').trim()||mapVtypeToBodyType(vtypeId)||(assigned&&assigned.bodyTypeId)||'board';
+  return {bodyGroup, bodyTypeId:vtypeId||bodyGroup, payloadTons, lengthM, widthM, heightM};
+}
+const TARIFF_UI_GROUP_ORDER={board:0, tent:1, van:2, reefer:3, dump:4, other:99};
+/** Группа для списка карточек тарифа в кабинете (борт / тент / фургон …). */
+function tariffRuleUiGroup(bodyTypeId){
+  const id=String(bodyTypeId||'').trim().toLowerCase();
+  if(id==='van') return {key:'van', label:'Фургоны'};
+  if(id==='tent') return {key:'tent', label:'Тент'};
+  const g=typeof mapVtypeToBodyType==='function'?mapVtypeToBodyType(id):'board';
+  if(g==='tent') return {key:'tent', label:'Тент'};
+  if(g==='board') return {key:'board', label:'Бортовые'};
+  if(g==='reefer') return {key:'reefer', label:'Рефрижераторы'};
+  if(g==='dump') return {key:'dump', label:'Самосвалы'};
+  return {key:'other', label:'Прочее'};
+}
+function tariffRuleDimSort(rule){
+  const r=rule||{};
+  const len=+(r.lengthFromM||0)||+(r.lengthToM||0);
+  return [len, +(r.widthM||0), +(r.heightM||0)];
+}
+function compareTariffRulesForUi(a,b){
+  const c=tariffRuleDimSort(a);
+  const d=tariffRuleDimSort(b);
+  for(let i=0;i<3;i++){ if(c[i]!==d[i]) return c[i]-d[i]; }
+  return String(a.bodyTypeId||'').localeCompare(String(b.bodyTypeId||''),'ru');
+}
+function groupTariffRulesForUi(rules){
+  const map=new Map();
+  (rules||[]).forEach(r=>{
+    if(!r) return;
+    const g=tariffRuleUiGroup(r.bodyTypeId);
+    if(!map.has(g.key)) map.set(g.key, {key:g.key, label:g.label, rules:[]});
+    map.get(g.key).rules.push(r);
+  });
+  const out=[...map.values()];
+  out.forEach(gr=>gr.rules.sort(compareTariffRulesForUi));
+  out.sort((a,b)=>(TARIFF_UI_GROUP_ORDER[a.key]??99)-(TARIFF_UI_GROUP_ORDER[b.key]??99));
+  return out;
+}
+/** Иконка «два листочка» (копировать) — как в чате заказчика. */
+function copySheetsIconHtml(size){
+  const s=+size>0?+size:16;
+  return `<svg class="icon-copy-sheets" width="${s}" height="${s}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>`;
+}
+function formatTariffDimRu(n){
+  if(n===''||n==null||n===undefined) return '∞';
+  const x=+n;
+  if(Number.isNaN(x)) return String(n);
+  const s=String(x).replace('.', ',');
+  return s;
+}
+function formatRuDecimalNumber(n, opts){
+  opts=opts||{};
+  const x=+n;
+  if(Number.isNaN(x)) return String(n||'');
+  if(!(x>0) && !(opts.allowZero && x===0)) return '';
+  let frac=opts.frac;
+  if(frac==null){
+    if(x>=100) frac=0;
+    else if(x>=1) frac=(x%1===0?0:1);
+    else frac=2;
+  }
+  const raw=frac===0?String(Math.round(x)):x.toFixed(frac);
+  return raw.replace('.', ',');
+}
+function formatCargoWeightKgRu(kg){
+  const k=+kg;
+  if(!(k>0)) return '';
+  return `${formatRuDecimalNumber(Math.round(k), {frac:0})} кг`;
+}
+function formatVolumeM3Ru(m3, opts){
+  opts=opts||{};
+  const v=+m3;
+  if(!(v>0)) return '';
+  return `${formatRuDecimalNumber(v, {frac:opts.frac!=null?opts.frac:1})} м³`;
+}
+function formatCargoDimRuM(n){
+  const v=+n;
+  if(!(v>0)) return '';
+  return `${formatRuDecimalNumber(v, {frac:1})} м`;
+}
+function formatCargoWeightTonsRu(tons, opts){
+  opts=opts||{};
+  const t=+tons;
+  if(!(t>0)) return '';
+  const prefix=opts.fromMin?'от ':'';
+  let frac=opts.frac;
+  if(frac==null) frac=t>=1&&(t%1===0)?0:(t>=1?1:2);
+  return `${prefix}${formatRuDecimalNumber(t, {frac})} т`;
+}
+/** Масса груза (кг) для UI: cargoWeightKg или reqPayloadTons у портальных заявок без kg на сервере. */
+function orderDisplayCargoMassKg(o){
+  if(!o) return null;
+  const kg=+o.cargoWeightKg;
+  if(kg>0) return Math.round(kg);
+  const tons=+o.reqPayloadTons;
+  if(!(tons>0)) return null;
+  const isPortal=o.source==='armada_sx'||o.customerSubmitted||o.publicLeadId;
+  if(!isPortal) return null;
+  const vtid=(Array.isArray(o.vehicleTypeIds)&&o.vehicleTypeIds[0])||'';
+  const def=ARMADA_SX_VTYPE_DEFAULT_REQS[vtid]||null;
+  const defTons=def&&+def.reqPayloadTons||0;
+  if(defTons>0 && Math.abs(tons-defTons)<0.001) return null;
+  return Math.round(tons*1000);
+}
+function formatOrderCargoMassDisplay(o){
+  const kg=orderDisplayCargoMassKg(o);
+  if(kg>0) return formatCargoWeightKgRu(kg);
+  return '';
+}
+/** Мин. грузоподъёмность ТС на карточке — не дублировать точную массу груза. */
+function formatOrderVehiclePayloadMinDisplay(o){
+  if(!o) return '';
+  const tons=+o.reqPayloadTons;
+  if(!(tons>0)) return '';
+  const massKg=orderDisplayCargoMassKg(o);
+  if(massKg>0 && Math.abs(tons*1000-massKg)<1) return '';
+  const vtid=(Array.isArray(o.vehicleTypeIds)&&o.vehicleTypeIds[0])||'';
+  const def=ARMADA_SX_VTYPE_DEFAULT_REQS[vtid]||null;
+  const defTons=def&&+def.reqPayloadTons||0;
+  const isPortal=o.source==='armada_sx'||o.customerSubmitted;
+  if(isPortal && defTons>0 && Math.abs(tons-defTons)<0.001) return formatCargoWeightTonsRu(tons, {fromMin:true});
+  if(massKg>0) return '';
+  return formatCargoWeightTonsRu(tons, {fromMin:true});
+}
+function capitalizeRu(s){
+  const t=String(s||'').trim();
+  if(!t) return '—';
+  return t.charAt(0).toUpperCase()+t.slice(1);
+}
+/** Заголовок карточки тарифа (кабинет + подсказки). */
+function tariffRuleDisplayTitle(rule){
+  const r=rule||{};
+  const body=capitalizeRu(typeof bodyTypeInputLabel==='function'?bodyTypeInputLabel(r.bodyTypeId):r.bodyTypeId);
+  const l0=+(r.lengthFromM||0);
+  const l1=+(r.lengthToM||0);
+  let lenPart='';
+  if(l0>0&&l1>0&&Math.abs(l0-l1)<0.001) lenPart=` д ${formatTariffDimRu(l0)}`;
+  else if(l0>0||l1>0) lenPart=` д ${formatTariffDimRu(l0||0)}–${l1>0?formatTariffDimRu(l1):'∞'}`;
+  const w=+(r.widthM||0);
+  const h=+(r.heightM||0);
+  const wPart=w>0?` ш ${formatTariffDimRu(w)}`:'';
+  const hPart=h>0?` в ${formatTariffDimRu(h)}`:'';
+  const t0=+(r.payloadFromTons||0);
+  const t1=+(r.payloadToTons||0);
+  const pay=` грузоподъемность от ${formatTariffDimRu(t0)} до ${t1>0?formatTariffDimRu(t1):'∞'} т`;
+  return `тип ТС ${body}${lenPart}${wPart}${hPart}${pay}`;
+}
+function tariffBodyGroupMatches(ruleBody, dims){
+  const rb=String(ruleBody||'').trim();
+  if(!rb) return true;
+  const g=String(dims.bodyGroup||'').trim();
+  const id=String(dims.bodyTypeId||'').trim();
+  if(rb===g||rb===id) return true;
+  if(id&&mapVtypeToBodyType(id)===rb) return true;
+  if(g&&mapVtypeToBodyType(g)===rb) return true;
+  return false;
+}
+function tariffDimInRange(val, from, to){
+  const v=+val;
+  if(!(v>0)) return true;
+  const f=+from;
+  const t=+to;
+  if(f>0&&v+1e-9<f) return false;
+  if(t>0&&v>t+1e-9) return false;
+  return true;
+}
+function tariffRuleMatchesDims(rule, dims){
+  if(!rule) return false;
+  if(!tariffBodyGroupMatches(rule.bodyTypeId, dims)) return false;
+  if(!(tariffDimInRange(dims.payloadTons, rule.payloadFromTons, rule.payloadToTons)
+    && tariffDimInRange(dims.lengthM, rule.lengthFromM, rule.lengthToM))) return false;
+  const rw=+(rule.widthM||0);
+  const rh=+(rule.heightM||0);
+  if(rw>0&&+(dims.widthM||0)>0&&Math.abs(dims.widthM-rw)>0.05) return false;
+  if(rh>0&&+(dims.heightM||0)>0&&Math.abs(dims.heightM-rh)>0.05) return false;
+  return true;
+}
+function tariffRuleSpecificity(rule){
+  const t0=+(rule.payloadFromTons||0);
+  const t1=+(rule.payloadToTons||0);
+  const l0=+(rule.lengthFromM||0);
+  const l1=+(rule.lengthToM||0);
+  const tw=(t1>0&&t0>=0)?Math.max(0.001,t1-t0):999;
+  const lw=(l1>0&&l0>=0)?Math.max(0.001,l1-l0):999;
+  const body=rule.bodyTypeId?0:1;
+  return body*1e6+tw*100+lw;
+}
+function tariffLightRuleFromBase(base){
+  return {
+    id:'__light__',
+    bodyTypeId:'',
+    payloadFromTons:base.payloadFromTons||0,
+    payloadToTons:base.payloadToTons>0?base.payloadToTons:5,
+    lengthFromM:base.lengthFromM||0,
+    lengthToM:base.lengthToM||0,
+    ratePerHour:base.defaultRatePerHourWork,
+    minWorkHours:base.minWorkHours,
+    podachaHours:base.podachaHours,
+    podachaEmptyKmLimit:base.podachaEmptyKmLimit,
+    cityKmThreshold:base.cityKmThreshold,
+    ratePerKm:base.defaultRatePerKmCash,
+    ratePerKmKad:base.ratePerKmOutsideKad||0
+  };
+}
+function financeFromTariffRule(base, rule){
+  return Object.assign({}, base, {
+    minWorkHours:rule.minWorkHours,
+    podachaHours:rule.podachaHours,
+    podachaEmptyKmLimit:rule.podachaEmptyKmLimit,
+    cityKmThreshold:rule.cityKmThreshold,
+    defaultRatePerHourWork:rule.ratePerHour,
+    defaultRatePerKmCash:rule.ratePerKm,
+    ratePerKmOutsideKad:rule.ratePerKmKad>0?rule.ratePerKmKad:base.ratePerKmOutsideKad,
+    payloadFromTons:rule.payloadFromTons>0?rule.payloadFromTons:base.payloadFromTons,
+    payloadToTons:rule.payloadToTons>0?rule.payloadToTons:base.payloadToTons
+  });
+}
+function tariffRuleHumanLabel(rule, dims){
+  let title=typeof tariffRuleDisplayTitle==='function'?tariffRuleDisplayTitle(rule):'';
+  if(dims&&(dims.payloadTons>0||dims.lengthM>0)){
+    title+=` · заявка ${dims.payloadTons||'?'} т`;
+    if(dims.lengthM>0) title+=`, ${dims.lengthM} м`;
+  }
+  return title;
+}
+function findTariffRuleForOrder(o, fin){
+  const base=normalizeFinance(fin||{});
+  const dims=orderTariffDimensions(o);
+  let matching=(base.tariffRules||[]).filter(r=>tariffRuleMatchesDims(r, dims));
+  if(!matching.length){
+    return {finance:base, missingRate:true, label:'Нет правила тарифа под заявку', ruleId:null};
+  }
+  matching.sort((a,b)=>tariffRuleSpecificity(a)-tariffRuleSpecificity(b));
+  const pick=matching[0];
+  if(!(+pick.ratePerHour>0)){
+    return {finance:base, missingRate:true, label:tariffRuleDisplayTitle(pick), ruleId:pick.id};
+  }
+  return {finance:financeFromTariffRule(base, pick), missingRate:false, label:tariffRuleHumanLabel(pick, dims), ruleId:pick.id};
+}
+function financeForOrderType(o, fin){
+  const m=findTariffRuleForOrder(o, fin);
+  return m&&m.finance?m.finance:normalizeFinance(fin||{});
+}
+function tariffTypeSeparate(bodyTypeId, payloadTons){
+  const id=String(bodyTypeId||'').trim();
+  if(/^(shalanda|tral|lowbed|lowbed_platform|manipulator|crane_truck|oversize)$/.test(id)) return true;
+  return (+payloadTons||0)>5;
+}
+function cabinetTariffTypes(companyId){
+  const map=new Map();
+  (state.vehicles||[]).forEach(v=>{
+    if(!v||v.companyId!==companyId) return;
+    const id=String(v.bodyTypeId||'').trim();
+    if(!id) return;
+    const g=mapVtypeToBodyType(id);
+    if(!map.has(g)) map.set(g, (typeof bodyTypeInputLabel==='function'&&bodyTypeInputLabel(id))||id);
+  });
+  return [...map.entries()].map(([id,label])=>({id, label}));
 }
 const state={
   step:"idle", orderStep:"idle", messages:[], shift:null,
@@ -1209,12 +1762,12 @@ function routeText(o){
 }
 const $ = id => document.getElementById(id);
 function show(id){
-  if(id==='driver'||id==='admin'||id==='admin-detail'||id==='admin-create'||id==='admin-claim'||id==='admin-catalogs-screen'||id==='admin-activity-screen'||id==='admin-billing-screen'||id==='admin-plans-screen'||id==='admin-docs-screen'||id==='admin-links-screen'||id==='admin-vehicle-card'||id==='admin-driver-card'||id==='customer-portal'){
+  if(id==='driver'||id==='admin'||id==='admin-detail'||id==='admin-create'||id==='admin-claim'||id==='admin-catalogs-screen'||id==='admin-activity-screen'||id==='admin-connect-leads-screen'||id==='admin-social-screen'||id==='admin-billing-screen'||id==='admin-plans-screen'||id==='admin-docs-screen'||id==='admin-links-screen'||id==='admin-vehicle-card'||id==='admin-driver-card'||id==='customer-portal'){
     if(typeof clearEntrySkin==='function') clearEntrySkin();
   }
   document.querySelectorAll('.phone > .screen').forEach(s=>s.classList.remove('show'));
   $(id).classList.add('show');
-  const wide = id==='admin'||id==='admin-detail'||id==='admin-create'||id==='admin-claim'||id==='admin-catalogs-screen'||id==='admin-activity-screen'||id==='admin-billing-screen'||id==='admin-plans-screen'||id==='admin-docs-screen'||id==='admin-links-screen'||id==='admin-vehicle-card'||id==='admin-driver-card'||id==='customer-portal';
+  const wide = id==='admin'||id==='admin-detail'||id==='admin-create'||id==='admin-claim'||id==='admin-catalogs-screen'||id==='admin-activity-screen'||id==='admin-connect-leads-screen'||id==='admin-social-screen'||id==='admin-billing-screen'||id==='admin-plans-screen'||id==='admin-docs-screen'||id==='admin-links-screen'||id==='admin-vehicle-card'||id==='admin-driver-card'||id==='customer-portal';
   $('shell').classList.toggle('wide', wide);
   try{
     if(id==='driver') localStorage.setItem(LAST_ROLE_KEY,'driver');
@@ -1351,6 +1904,12 @@ function normalizeCustomerPortalLead(raw){
     city,
     fleetSize,
     vehicleTypeId:vehicleTypeId||null,
+    cargoWeightKg:numOrNull(raw.cargoWeightKg),
+    cargoPlaces:numOrNull(raw.cargoPlaces),
+    cargoVolumeM3:numOrNull(raw.cargoVolumeM3),
+    reqLengthM:numOrNull(raw.reqLengthM||raw.cargoLengthM),
+    reqWidthM:numOrNull(raw.reqWidthM||raw.cargoWidthM),
+    reqHeightM:numOrNull(raw.reqHeightM||raw.cargoHeightM),
     loadAddress:String(raw.loadAddress||raw.address||'').trim()||null,
     unloadAddress:String(raw.unloadAddress||'').trim()||null,
     vehicleAt:String(raw.vehicleAt||'').trim()||null,
@@ -1367,9 +1926,156 @@ function normalizeCustomerPortalLead(raw){
 }
 function migrateCustomerPortalLeads(){
   state.customerPortalLeads=(state.customerPortalLeads||[]).map(normalizeCustomerPortalLead).filter(Boolean);
+  migrateTransportLeadsInboxOnly();
+}
+/** Заявка transport → заказ во «Входящие»; pilot/portal — вкладка «Заявки на подключение»; сбой без orderId — Активность. */
+function migrateTransportLeadsInboxOnly(){
+  let changed=false;
+  (state.customerPortalLeads||[]).forEach(l=>{
+    if(l.kind!=='transport'||l.status!=='pending'||!l.orderId) return;
+    l.status='done';
+    l.doneAt=l.doneAt||new Date().toISOString();
+    changed=true;
+  });
+  if(changed) bumpDataEpoch('transport-lead-inbox');
+  return changed;
+}
+/** Ссылки TG/VK для супер-админа (автопост TG/VK — позже на armada-api). */
+function migrateMarketingSocial(){
+  const ms=state.marketingSocial;
+  if(!ms||typeof ms!=='object'){
+    state.marketingSocial={ telegramChannelUrl:'', vkGroupUrl:'' };
+    return;
+  }
+  ms.telegramChannelUrl=String(ms.telegramChannelUrl||'').trim();
+  ms.vkGroupUrl=String(ms.vkGroupUrl||'').trim();
+  state.marketingSocial=ms;
+}
+/** Канал MAX (бот + chat_id) — хранится в облаке, посты через armada-api /marketing/max/* */
+function isPlausibleMaxBotToken(t){
+  const s=String(t||'').trim();
+  if(!s||s.length<16) return false;
+  if(/[^\x21-\x7E]/.test(s)) return false;
+  if(/max\.ru|^https?:/i.test(s)) return false;
+  if(/•/.test(s)||/\u2022/.test(s)) return false;
+  return true;
+}
+function migrateMarketingMax(){
+  const mm=state.marketingMax;
+  if(!mm||typeof mm!=='object'){
+    state.marketingMax={ bot:{ token:'', chatId:'', enabled:false }, queue:[] };
+    return;
+  }
+  if(!mm.bot||typeof mm.bot!=='object') mm.bot={ token:'', chatId:'', enabled:false };
+  mm.bot.token=String(mm.bot.token||'');
+  if(mm.bot.token&&!isPlausibleMaxBotToken(mm.bot.token)) mm.bot.token='';
+  mm.bot.chatId=String(mm.bot.chatId||'');
+  mm.bot.enabled=!!mm.bot.enabled;
+  if(!Array.isArray(mm.queue)) mm.queue=[];
+  mm.queue=mm.queue.filter(Boolean).map(item=>{
+    if(!item||typeof item!=='object') return null;
+    return {
+      id:String(item.id||uuid()),
+      text:String(item.text||'').slice(0,4000),
+      status:['draft','scheduled','published','failed','cancelled'].includes(item.status)?item.status:'draft',
+      scheduledAt:item.scheduledAt?String(item.scheduledAt):'',
+      publishedAt:item.publishedAt?String(item.publishedAt):'',
+      maxMessageId:item.maxMessageId!=null?String(item.maxMessageId):'',
+      error:String(item.error||''),
+      title:String(item.title||'').slice(0,120),
+      createdAt:item.createdAt?String(item.createdAt):(new Date().toISOString()),
+      updatedAt:item.updatedAt?String(item.updatedAt):''
+    };
+  }).filter(Boolean);
+  state.marketingMax=mm;
+}
+async function postMarketingMaxApi(action, body){
+  if(!API_BASE) throw new Error('API недоступен');
+  await ensureArmadaApiToken({});
+  const res=await fetchWithTimeout(`${API_BASE}/marketing/max/${action}`, {
+    method:'POST',
+    headers:armadaApiJsonHeaders(),
+    body:JSON.stringify(body||{})
+  }, 20000);
+  const data=await res.json().catch(()=>({}));
+  if(!res.ok) throw new Error(data.error||data.message||('HTTP '+res.status));
+  return data;
+}
+async function marketingMaxTestPost(){
+  return postMarketingMaxApi('test', {});
+}
+async function marketingMaxDiscoverChat(){
+  return postMarketingMaxApi('discover-chat', {});
+}
+async function marketingMaxPublishScheduled(){
+  return postMarketingMaxApi('tick', {});
+}
+async function marketingMaxPublishPost(postId, text){
+  return postMarketingMaxApi('publish', { postId:String(postId||''), text:String(text||'') });
 }
 function companyOwnRole(c){
   return !!(c&&Array.isArray(c.roles)&&c.roles.includes('own'));
+}
+function companyHasRole(c, role){
+  return !!(c&&Array.isArray(c.roles)&&c.roles.includes(role));
+}
+function contactPhone(contact){
+  if(!contact) return '';
+  if(typeof contact==='string') return formatPhone(contact);
+  if(contact.phone) return formatPhone(contact.phone);
+  const ph=(contact.phones||[])[0];
+  if(ph) return formatPhone(ph.number||ph.phone||ph);
+  return '';
+}
+function driverPercent(name, companyId){
+  const list=state.drivers||[];
+  if(companyId){
+    const hit=list.find(d=>samePersonName(d.name,name) && d.companyId===companyId);
+    if(hit) return hit.salaryPercent??30;
+  }
+  return (list.find(d=>samePersonName(d.name,name))||{salaryPercent:30}).salaryPercent;
+}
+/** Минимальный upsert для order.html (полная версия в app.js на /a). */
+function upsertCompany(raw){
+  if(!raw) return null;
+  const name=String(raw.name||'').trim();
+  if(!name) return null;
+  const spaceId=raw.spaceId||null;
+  const roles=Array.isArray(raw.roles)?raw.roles.slice():[];
+  const idx=(state.companies||[]).findIndex(x=>{
+    if(raw.id && x.id===raw.id) return true;
+    return String(x.name).toLowerCase()===name.toLowerCase() && (x.spaceId||null)===(spaceId||null);
+  });
+  const base={
+    name,
+    roles,
+    note:String(raw.note||'').trim(),
+    contacts:raw.contacts||[],
+    phones:raw.phones||[],
+    loadingAddresses:raw.loadingAddresses||[],
+    unloadingAddresses:raw.unloadingAddresses||[],
+    vehicles:raw.vehicles||[],
+    drivers:raw.drivers||[],
+    spaceId,
+    inn:raw.inn||'',
+    ogrn:raw.ogrn||'',
+    kpp:raw.kpp||'',
+    address:raw.address||''
+  };
+  if(idx>=0){
+    const prev=state.companies[idx];
+    const merged=Object.assign({}, prev, base, {
+      id:prev.id,
+      roles:[...new Set([...(prev.roles||[]), ...roles])]
+    });
+    state.companies[idx]=merged;
+    state.companies.sort((a,b)=>String(a.name).localeCompare(String(b.name),'ru'));
+    return merged;
+  }
+  const created=Object.assign({id:raw.id||uuid()}, base);
+  state.companies.push(created);
+  state.companies.sort((a,b)=>String(a.name).localeCompare(String(b.name),'ru'));
+  return created;
 }
 function findArmadaLogistCompany(){
   if(typeof migrateSpaces==='function') migrateSpaces();
@@ -1502,6 +2208,19 @@ function insertPublicTransportOrder(lead, customerCo, armadaCo){
     partnerSpaceId:null,
     transportApp:null
   };
+  if(lead.cargoWeightKg>0){
+    order.cargoWeightKg=lead.cargoWeightKg;
+    order.reqPayloadTons=Math.round(lead.cargoWeightKg/10)/100;
+  }
+  if(lead.cargoPlaces>0) order.cargoPlaces=lead.cargoPlaces;
+  if(lead.cargoVolumeM3>0) order.cargoVolumeM3=lead.cargoVolumeM3;
+  if(lead.reqLengthM>0) order.reqLengthM=lead.reqLengthM;
+  if(lead.reqWidthM>0) order.reqWidthM=lead.reqWidthM;
+  if(lead.reqHeightM>0) order.reqHeightM=lead.reqHeightM;
+  applyVehicleTypeDefaultReqs(order, true);
+  if(!(order.cargoVolumeM3>0)&&order.reqLengthM>0&&order.reqWidthM>0&&order.reqHeightM>0){
+    order.cargoVolumeM3=Math.round(order.reqLengthM*order.reqWidthM*order.reqHeightM*10)/10;
+  }
   ensureRoutePoints(order);
   state.orders=state.orders||[];
   state.orders.unshift(order);
@@ -1523,7 +2242,19 @@ function attachArmadaTransportLead(rec){
   if(!customer) return null;
   return insertPublicTransportOrder(rec, customer, armada);
 }
-async function appendCustomerPortalLead(raw){
+function revertArmadaLocalSnapshot(json){
+  if(!json) return;
+  try{
+    const p=JSON.parse(json);
+    if(typeof applyPayload==='function') applyPayload(p, {remoteSeq:false});
+    if(typeof persistLocalOnly==='function') persistLocalOnly();
+  }catch(err){ console.warn('revert local snapshot', err); }
+}
+async function appendCustomerPortalLead(raw, opts){
+  opts=opts||{};
+  const rollbackOnFail=!!opts.rollbackOnPersistFail;
+  const rollbackJson=rollbackOnFail?JSON.stringify(snapshot()):null;
+  const revert=()=>{ if(rollbackJson) revertArmadaLocalSnapshot(rollbackJson); };
   migrateCustomerPortalLeads();
   const rec=normalizeCustomerPortalLead(raw);
   if(!rec) return {ok:false, error:'Заполните компанию и телефон'};
@@ -1535,12 +2266,28 @@ async function appendCustomerPortalLead(raw){
   let order=null;
   if(rec.kind==='transport'){
     order=attachArmadaTransportLead(rec);
-    if(order) bumpDataEpoch('armada-sx-order');
+    if(order){
+      bumpDataEpoch('armada-sx-order');
+      rec.status='done';
+      rec.doneAt=new Date().toISOString();
+    }
   }
   bumpDataEpoch('customer-portal-lead');
   persistLocalOnly();
+  if(rec.kind==='transport'&&!rec.orderId){
+    revert();
+    return {ok:false, error:'Не удалось создать заказ — проверьте связь с сервером и справочник ООО «Армада»'};
+  }
   try{
-    await persist();
+    if(typeof persistCustomerPortalOrderImmediate==='function'){
+      const push=await persistCustomerPortalOrderImmediate();
+      if(push&&push.ok===false){
+        revert();
+        throw new Error(push.offline?'Нет связи с сервером — заявка не сохранена':'Не удалось сохранить на сервер');
+      }
+    }else{
+      await persist();
+    }
     return {
       ok:true,
       id:rec.id,
@@ -1549,14 +2296,17 @@ async function appendCustomerPortalLead(raw){
       customerId:rec.customerId||null
     };
   }catch(err){
+    revert();
     console.warn('customer portal lead persist', err);
+    const msg=(err&&err.message)||'';
+    const offline=/Нет связи|offline|Failed to fetch|NetworkError|ERR_/i.test(msg)||(typeof navigator!=='undefined'&&navigator.onLine===false);
+    const userMsg=offline?'Нет связи с сервером — заявка не сохранена':msg;
+    const error=(typeof armadaUserFacingError==='function'?armadaUserFacingError(userMsg):userMsg)||'Не удалось сохранить на сервер';
     return {
-      ok:true,
+      ok:false,
+      error,
       id:rec.id,
-      offline:true,
-      orderId:rec.orderId||null,
-      orderNumber:order&&order.sequentialNumber||null,
-      customerId:rec.customerId||null
+      orderId:null
     };
   }
 }
@@ -1582,6 +2332,57 @@ function pendingPortalAccessLeads(){
 }
 function pendingPilotLeads(){
   return pendingCustomerPortalLeads().filter(l=>l.kind==='pilot');
+}
+function pilotRoleNorm(role){
+  const r=String(role||'').trim().toLowerCase();
+  if(r==='carrier'||r==='перевозчик') return 'carrier';
+  if(r==='logist'||r==='логист') return 'logist';
+  return r||'';
+}
+/** Заявки на подключение: перевозчик (pilot). */
+function pendingCarrierConnectLeads(){
+  return pendingCustomerPortalLeads().filter(l=>l.kind==='pilot'&&pilotRoleNorm(l.pilotRole)==='carrier');
+}
+/** Заявки на подключение: логист / кабинет (pilot). */
+function pendingLogistConnectLeads(){
+  return pendingCustomerPortalLeads().filter(l=>l.kind==='pilot'&&pilotRoleNorm(l.pilotRole)==='logist');
+}
+function pendingConnectLeadsCount(){
+  return pendingPortalAccessLeads().length+pendingCarrierConnectLeads().length+pendingLogistConnectLeads().length;
+}
+const ARMADA_AUTO_EPOCH_MAX_PER_MIN=3;
+const ARMADA_AUTO_EPOCH_REPEAT_MS=8000;
+let armadaAutoEpochLog=[];
+let armadaAutoEpochHalted=false;
+function armadaAutoEpochResetGuard(){
+  armadaAutoEpochLog=[];
+  armadaAutoEpochHalted=false;
+}
+/** Лимит автоматических dataEpoch (reconcile, документы) — защита от пинг-понга. */
+function armadaAutoEpochAllowed(reason, orderId){
+  if(armadaAutoEpochHalted) return false;
+  const tag=String(reason||'auto');
+  const oid=orderId!=null?String(orderId):'';
+  const now=Date.now();
+  while(armadaAutoEpochLog.length&&now-armadaAutoEpochLog[0].at>60000) armadaAutoEpochLog.shift();
+  const last=armadaAutoEpochLog[armadaAutoEpochLog.length-1];
+  if(last&&last.tag===tag&&last.orderId===oid&&now-last.at<ARMADA_AUTO_EPOCH_REPEAT_MS){
+    armadaAutoEpochHalted=true;
+    console.warn('автозапись остановлена: цикл', tag);
+    return false;
+  }
+  if(armadaAutoEpochLog.length>=ARMADA_AUTO_EPOCH_MAX_PER_MIN){
+    armadaAutoEpochHalted=true;
+    console.warn('автозапись остановлена: цикл', tag);
+    return false;
+  }
+  return true;
+}
+function bumpDataEpochAuto(reason, orderId){
+  if(!armadaAutoEpochAllowed(reason, orderId)) return false;
+  bumpDataEpoch(reason);
+  armadaAutoEpochLog.push({at:Date.now(), tag:String(reason||'auto'), orderId:orderId!=null?String(orderId):''});
+  return true;
 }
 function bumpDataEpoch(reason){
   state.dataEpoch=(Number(state.dataEpoch)||0)+1;
@@ -1718,8 +2519,30 @@ function snapshot(){
     docTemplates:typeof docTemplatesSnapshotSlice==='function'?docTemplatesSnapshotSlice():state.docTemplates,
     customerPortalLeads:Array.isArray(state.customerPortalLeads)?state.customerPortalLeads:[],
     opsLog:Array.isArray(state.opsLog)?state.opsLog:[],
+    marketingMax:typeof marketingMaxSnapshotSlice==='function'?marketingMaxSnapshotSlice():state.marketingMax,
+    marketingSocial:typeof marketingSocialSnapshotSlice==='function'?marketingSocialSnapshotSlice():state.marketingSocial,
     savedAt:new Date().toISOString(),
     appBuild:APP_BUILD
+  };
+}
+function marketingMaxSnapshotSlice(){
+  if(typeof migrateMarketingMax==='function') migrateMarketingMax();
+  const mm=state.marketingMax||{ bot:{ token:'', chatId:'', enabled:false }, queue:[] };
+  return {
+    bot:{
+      token:String(mm.bot&&mm.bot.token||''),
+      chatId:String(mm.bot&&mm.bot.chatId||''),
+      enabled:!!(mm.bot&&mm.bot.enabled)
+    },
+    queue:Array.isArray(mm.queue)?mm.queue.slice():[]
+  };
+}
+function marketingSocialSnapshotSlice(){
+  if(typeof migrateMarketingSocial==='function') migrateMarketingSocial();
+  const ms=state.marketingSocial||{ telegramChannelUrl:'', vkGroupUrl:'' };
+  return {
+    telegramChannelUrl:String(ms.telegramChannelUrl||''),
+    vkGroupUrl:String(ms.vkGroupUrl||'')
   };
 }
 function scorePayload(p){
@@ -1759,8 +2582,12 @@ function applyPayload(p, opts){
   state.driverInvites=Array.isArray(p.driverInvites)?p.driverInvites:[];
   state.customerPortalLeads=Array.isArray(p.customerPortalLeads)?p.customerPortalLeads.map(normalizeCustomerPortalLead).filter(Boolean):[];
   state.opsLog=Array.isArray(p.opsLog)?p.opsLog:[];
+  if(p.marketingMax&&typeof p.marketingMax==='object') state.marketingMax=p.marketingMax;
+  if(typeof migrateMarketingMax==='function') migrateMarketingMax();
+  if(p.marketingSocial&&typeof p.marketingSocial==='object') state.marketingSocial=p.marketingSocial;
+  if(typeof migrateMarketingSocial==='function') migrateMarketingSocial();
   state.dataEpoch=Number(p.dataEpoch)||0;
-  mergeAdminAuthFromRemote(p, opts);
+  if(typeof mergeAdminAuthFromRemote==='function') mergeAdminAuthFromRemote(p, opts);
   if(!(state.finance.markupPercent>=0)) state.finance.markupPercent=15;
   if(state.finance.markupPercent>80) state.finance.markupPercent=80;
   if(!(state.finance.cityKmThreshold>0)) state.finance.cityKmThreshold=100;
@@ -1774,27 +2601,27 @@ function applyPayload(p, opts){
   if(!('orders' in p) && state.shifts.length && !state.orders.length){
     state.orders=stripCancelledFromOrders(state.shifts.flatMap(s=>s.orders||[]));
   }
-  if(keepShifts) mergeLocalShifts(keepShifts);
-  if(keepOrders) mergeLocalOrders(keepOrders);
+  if(keepShifts && typeof mergeLocalShifts==='function') mergeLocalShifts(keepShifts);
+  if(keepOrders && typeof mergeLocalOrders==='function') mergeLocalOrders(keepOrders);
   state.orders=stripCancelledFromOrders(state.orders);
   state.orders.forEach(o=>{
     if(o.customer==null) o.customer="";
-    if(o.driverPercent==null) o.driverPercent=driverPercent(o.driverName||DRIVER);
+    if(o.driverPercent==null && typeof driverPercent==='function') o.driverPercent=driverPercent(o.driverName||DRIVER);
     ensureRoutePoints(o);
   });
-  migrateCompanies();
-  migrateAdmins();
+  if(typeof migrateCompanies==='function') migrateCompanies();
+  if(typeof migrateAdmins==='function') migrateAdmins();
   migrateDriverOwners();
   migrateSpaces();
   if(typeof migrateBilling==='function') migrateBilling();
-  migrateDriverOrderOwners();
+  if(typeof migrateDriverOrderOwners==='function') migrateDriverOrderOwners();
   if(typeof migrateRepairOrderOwnersBySpace==='function') migrateRepairOrderOwnersBySpace();
-  migrateShiftOwners();
+  if(typeof migrateShiftOwners==='function') migrateShiftOwners();
   migrateDriverPins();
   migrateCompanyFinance();
-  healVehicleOdometersFromShifts();
-  ensureManufacturerServiceIntervals();
-  migrateEtoFromMessages();
+  if(typeof healVehicleOdometersFromShifts==='function') healVehicleOdometersFromShifts();
+  if(typeof ensureManufacturerServiceIntervals==='function') ensureManufacturerServiceIntervals();
+  if(typeof migrateEtoFromMessages==='function') migrateEtoFromMessages();
   // Заказы только в смене (потерялись из state.orders) — поднять в общий список
   (state.shifts||[]).forEach(s=>{
     (s.orders||[]).forEach(o=>{
@@ -1807,8 +2634,9 @@ function applyPayload(p, opts){
   });
   state.orders=stripCancelledFromOrders(state.orders);
   // Наоборот: заказы в списке, но выпали из смены — вернуть в смену + чат
-  healOrphanOrdersIntoShifts();
+  if(typeof healOrphanOrdersIntoShifts==='function') healOrphanOrdersIntoShifts();
   healAllOrders();
+  migrateArmadaSxOrderReqs();
   purgeCancelledOrders();
   if(typeof pruneInvoicesForDeletedOrders==='function') pruneInvoicesForDeletedOrders();
   if(typeof migrateRestoreNechaevDriver==='function') migrateRestoreNechaevDriver();
@@ -1919,6 +2747,9 @@ function normalizeSpace(s){
     routeTemplates,
     createdAt:s.createdAt||new Date().toISOString()
   };
+}
+function findCompanyById(id){
+  return (state.companies||[]).find(c=>c.id===id)||null;
 }
 function findSpaceById(id){ return (state.spaces||[]).find(s=>s.id===id)||null; }
 function currentSpaceId(){ return (currentAdmin&&currentAdmin.spaceId)||null; }
@@ -2785,7 +3616,14 @@ function pushServerStateQueued(){
     return syncPushInFlight;
   }
   syncPushInFlight=pushServerState()
-    .catch(err=>{ throw err; })
+    .then(res=>{
+      if(res&&res.ignoredAuthFields&&res.ignoredAuthFields.length){
+        const e=new Error(res.message||'ignored_auth_fields');
+        e.ignoredAuthFields=res.ignoredAuthFields;
+        throw e;
+      }
+      return res;
+    })
     .finally(()=>{
       syncPushInFlight=null;
       if(syncPushQueued){
@@ -2809,6 +3647,67 @@ function armadaApiJsonHeaders(){
   const t=armadaApiToken();
   if(t) h.Authorization='Bearer '+t;
   return h;
+}
+/** Последние pin/meta для однократного перелогина после 401 (без проверки подписи JWT). */
+let armadaApiAuthRetryOpts={ pin:'sync', meta:{ role:'sync' } };
+function rememberArmadaApiAuthOpts(opts){
+  const o=opts||{};
+  if(o.pin!=null) armadaApiAuthRetryOpts.pin=o.pin;
+  if(o.meta!=null) armadaApiAuthRetryOpts.meta=o.meta;
+}
+function decodeArmadaJwtPayload(token){
+  try{
+    const parts=String(token||'').split('.');
+    if(parts.length!==3) return null;
+    let b64=parts[1].replace(/-/g,'+').replace(/_/g,'/');
+    const pad=b64.length%4;
+    if(pad) b64+='='.repeat(4-pad);
+    if(typeof atob!=='function') return null;
+    const json=atob(b64);
+    return JSON.parse(json);
+  }catch(_){ return null; }
+}
+function armadaApiTokenExpiredOrSoon(token, skewSec){
+  const sk=skewSec==null?60:Number(skewSec)||0;
+  const p=decodeArmadaJwtPayload(token);
+  if(!p||p.exp==null) return false;
+  const now=Math.floor(Date.now()/1000);
+  return now>=(Number(p.exp)-sk);
+}
+function armadaApiTokenUsable(){
+  const t=armadaApiToken();
+  if(!t) return false;
+  if(armadaApiTokenExpiredOrSoon(t)) return false;
+  return true;
+}
+function armadaApiTokenRole(){
+  const p=decodeArmadaJwtPayload(armadaApiToken());
+  return p&&String(p.role||'').trim()||'';
+}
+/** Ответ GET /state по sync-токену (каталог входа, без orders/shifts). */
+function armadaRemotePayloadIsLoginBootstrap(p){
+  if(!p||typeof p!=='object') return false;
+  if(Object.prototype.hasOwnProperty.call(p,'orders')) return false;
+  if(Array.isArray(p.shifts)&&p.shifts.length) return false;
+  if(p.finance!=null) return false;
+  return true;
+}
+/** Запрос к API_BASE с однократным перелогином при 401. */
+async function fetchArmadaApi(path, init, timeoutMs, _did401Retry){
+  if(!API_BASE) throw new Error('API не настроен');
+  const url=path.startsWith('http')?path:`${API_BASE}${path.startsWith('/')?path:'/'+path}`;
+  const res=await fetchWithTimeout(url, init, timeoutMs);
+  if(res.status!==401||_did401Retry) return res;
+  setArmadaApiToken('');
+  const ro=armadaApiAuthRetryOpts||{ pin:'sync', meta:{ role:'sync' } };
+  const ok=await ensureArmadaApiToken({ pin:ro.pin||'sync', meta:ro.meta||{ role:'sync' } });
+  if(!ok) return res;
+  const h=armadaApiJsonHeaders();
+  const prev=(init&&init.headers)||{};
+  if(prev['Content-Type']) h['Content-Type']=prev['Content-Type'];
+  if(prev.Accept) h.Accept=prev.Accept;
+  const init2={ ...init, headers:h };
+  return fetchWithTimeout(url, init2, timeoutMs);
 }
 /** При входе: spaces/companies/drivers с сервера — иначе на чистом браузере нет каталога. */
 function mergeDriversFromRemoteForLogin(remoteDrivers){
@@ -2869,24 +3768,146 @@ async function refreshAuthFromServer(opts){
 }
 async function ensureArmadaApiToken(opts){
   if(!API_BASE) return false;
-  if(armadaApiToken()) return true;
-  if(typeof armadaApiLogin!=='function') return false;
   const o=opts||{};
+  rememberArmadaApiAuthOpts(o);
+  if(armadaApiTokenUsable()) return true;
+  if(armadaApiToken()) setArmadaApiToken('');
+  if(typeof armadaApiLogin!=='function') return false;
   const token=await armadaApiLogin(o.pin||'sync', o.meta||{role:'sync'});
   return !!token;
 }
 async function armadaApiLogin(pin, meta){
   if(!API_BASE || !pin) return null;
   try{
+    const m=meta||{};
     const res=await fetchWithTimeout(`${API_BASE}/auth/login`, {
       method:'POST',
       headers:{ 'Content-Type':'application/json', Accept:'application/json' },
-      body:JSON.stringify({ pin, role:'admin', adminId:meta&&meta.id, spaceId:meta&&meta.spaceId })
+      body:JSON.stringify({
+        pin,
+        role:m.role|| (pin==='sync'?'sync':'admin'),
+        adminId:m.id,
+        spaceId:m.spaceId
+      })
     }, 8000);
     const data=await res.json().catch(()=>({}));
     if(res.ok && data.token){ setArmadaApiToken(data.token); return data.token; }
   }catch(err){ console.warn('armada-api login', err); }
   return null;
+}
+async function armadaApiVerifyAdmin(login, pin){
+  if(!API_BASE || !login || !pin) return null;
+  try{
+    const res=await fetchWithTimeout(`${API_BASE}/auth/verify-admin`, {
+      method:'POST',
+      headers:{ 'Content-Type':'application/json', Accept:'application/json' },
+      body:JSON.stringify({ login, pin })
+    }, 12000);
+    const data=await res.json().catch(()=>({}));
+    if(res.ok && data.token){
+      setArmadaApiToken(data.token);
+      return data;
+    }
+  }catch(err){ console.warn('armada-api verify-admin', err); }
+  return null;
+}
+/** Смена своего PIN админа на сервере (не через PATCH snapshot). */
+async function armadaApiChangeAdminPin(oldPin, newPin){
+  if(!API_BASE || !oldPin || !newPin) return { ok:false, error:'missing' };
+  try{
+    await ensureArmadaApiToken({});
+    if(armadaApiTokenRole()!=='admin') return { ok:false, error:'not_admin' };
+    const res=await fetchArmadaApi('/auth/change-admin-pin', {
+      method:'POST',
+      headers:armadaApiJsonHeaders(),
+      body:JSON.stringify({ oldPin:String(oldPin).trim(), newPin:String(newPin).trim() })
+    }, 12000);
+    const data=await res.json().catch(()=>({}));
+    if(res.status===401) return { ok:false, error:'invalid_old_pin' };
+    if(!res.ok) return { ok:false, error:data.error||('http_'+res.status) };
+    return { ok:true };
+  }catch(err){
+    console.warn('armada-api change-admin-pin', err);
+    return { ok:false, error:String(err&&err.message||err) };
+  }
+}
+/** Супер: PIN другому admin (не через PATCH snapshot). */
+async function armadaApiSetAdminPin(adminId, newPin){
+  if(!API_BASE || !adminId || !newPin) return { ok:false, error:'missing' };
+  try{
+    await ensureArmadaApiToken({});
+    if(armadaApiTokenRole()!=='admin') return { ok:false, error:'not_admin' };
+    const res=await fetchArmadaApi('/auth/set-admin-pin', {
+      method:'POST',
+      headers:armadaApiJsonHeaders(),
+      body:JSON.stringify({ adminId:String(adminId).trim(), newPin:String(newPin).trim() })
+    }, 12000);
+    const data=await res.json().catch(()=>({}));
+    if(res.status===403) return { ok:false, error:'forbidden' };
+    if(!res.ok) return { ok:false, error:data.error||('http_'+res.status) };
+    return { ok:true };
+  }catch(err){
+    console.warn('armada-api set-admin-pin', err);
+    return { ok:false, error:String(err&&err.message||err) };
+  }
+}
+let armadaApiVerifyDriverUnsupported=false;
+async function armadaApiVerifyDriver(phone, pin, driverId){
+  if(!API_BASE || !phone || !pin) return null;
+  if(armadaApiVerifyDriverUnsupported) return null;
+  try{
+    const body={ phone, pin };
+    if(driverId) body.driverId=driverId;
+    const res=await fetchWithTimeout(`${API_BASE}/auth/verify-driver`, {
+      method:'POST',
+      headers:{ 'Content-Type':'application/json', Accept:'application/json' },
+      body:JSON.stringify(body)
+    }, 12000);
+    if(res.status===404){
+      armadaApiVerifyDriverUnsupported=true;
+      return null;
+    }
+    const data=await res.json().catch(()=>({}));
+    if(res.ok && data.token){
+      setArmadaApiToken(data.token);
+      return data;
+    }
+  }catch(err){ console.warn('armada-api verify-driver', err); }
+  return null;
+}
+async function armadaApiVerifyCustomer(phone, pin, scope){
+  if(!API_BASE || !phone || !pin) return null;
+  try{
+    const body={ phone, pin };
+    if(scope) body.scope=scope;
+    const res=await fetchWithTimeout(`${API_BASE}/auth/verify-customer`, {
+      method:'POST',
+      headers:{ 'Content-Type':'application/json', Accept:'application/json' },
+      body:JSON.stringify(body)
+    }, 12000);
+    const data=await res.json().catch(()=>({}));
+    if(res.ok && data.token){
+      setArmadaApiToken(data.token);
+      return data;
+    }
+    return {__verifyFail:true, status:res.status, error:String(data.error||data.message||'').trim()};
+  }catch(err){ console.warn('armada-api verify-customer', err); }
+  return null;
+}
+/** Ручное «Обновить» в портале: true только после успешного чтения state с сервера. */
+async function armadaManualServerRefresh(reason, timeoutMs){
+  if(navigator.onLine===false) return false;
+  if(typeof fetchServerState!=='function') return false;
+  try{
+    const rec=await fetchServerState(timeoutMs||10000);
+    if(!rec||!rec.payload) return false;
+    pbRecordId=rec.id;
+    touchSyncServerOk();
+    if(typeof pullRemoteUpdates==='function') await pullRemoteUpdates(reason||'manual-refresh');
+    return true;
+  }catch(_){
+    return false;
+  }
 }
 async function fetchArmadaApiHealth(timeoutMs){
   if(!API_BASE) return null;
@@ -2897,7 +3918,7 @@ async function fetchArmadaApiHealth(timeoutMs){
   }catch(_){ return null; }
 }
 async function fetchServerStateFromApi(timeoutMs){
-  const res=await fetchWithTimeout(`${API_BASE}/state`, { headers:armadaApiJsonHeaders() }, timeoutMs);
+  const res=await fetchArmadaApi('/state', { headers:armadaApiJsonHeaders() }, timeoutMs);
   const data=await res.json().catch(()=>({}));
   if(!res.ok) throw new Error(data.error||data.message||'API state '+res.status);
   const rec=data.record;
@@ -2914,15 +3935,119 @@ async function fetchServerStateFromPb(timeoutMs){
   const data=await res.json();
   return (data.items&&data.items[0])||null;
 }
+function armadaCustomerPortalActive(){
+  try{
+    if(globalThis.ARMADA_CUSTOMER_PORTAL_ACTIVE) return true;
+    if(typeof document!=='undefined' && document.querySelector('#customer-portal.show')) return true;
+    const p=(location.pathname||'').toLowerCase();
+    if(/\/(z)(\/|$)/.test(p)) return true;
+  }catch(_){}
+  return false;
+}
+function armadaPbStateFallbackAllowed(){
+  if(typeof window!=='undefined' && window.ARMADA_PUBLIC_ORDER_STANDALONE) return false;
+  if(armadaCustomerPortalActive()) return false;
+  if(typeof currentCustomer!=='undefined' && currentCustomer) return false;
+  return true;
+}
+function armadaBackgroundRemoteSyncEnabled(){
+  if(typeof window!=='undefined' && window.ARMADA_PUBLIC_ORDER_STANDALONE) return false;
+  if(armadaCustomerPortalActive()) return false;
+  if(typeof currentCustomer!=='undefined' && currentCustomer) return false;
+  return true;
+}
+/** /z /v /a без восстановленной сессии — не мигрировать localStorage и не sync на сервер. */
+function armadaDedicatedGuestNoSession(){
+  let urlEntry=typeof dedicatedEntryMode==='function'?dedicatedEntryMode():null;
+  if(!urlEntry&&typeof isDedicatedEntryUrl==='function'&&isDedicatedEntryUrl()){
+    try{ urlEntry=typeof readEntryFromUrl==='function'?readEntryFromUrl():null; }catch(_){ urlEntry=null; }
+  }
+  if(!urlEntry){
+    try{
+      const path=(location.pathname||'').toLowerCase();
+      if(/^\/z(?:\/|$)/.test(path)) urlEntry='customer';
+      else if(/^\/v(?:\/|$)/.test(path)) urlEntry='driver';
+      else if(/^\/a(?:\/|$)/.test(path)) urlEntry='admin';
+    }catch(_){}
+  }
+  if(!urlEntry) return false;
+  if(urlEntry==='customer'){
+    if(typeof restoreCustomerSession!=='function') return true;
+    return !restoreCustomerSession();
+  }
+  if(urlEntry==='driver'){
+    if(typeof restoreDriverSession!=='function') return true;
+    return !restoreDriverSession();
+  }
+  if(urlEntry==='admin'){
+    if(typeof canAutoRestoreAdmin!=='function') return true;
+    return !canAutoRestoreAdmin();
+  }
+  return false;
+}
+function armadaStripOrderComparableVolatile(o){
+  if(!o||typeof o!=='object') return o;
+  const c=structuredClone(o);
+  delete c.updatedAt;
+  delete c.customerDriverDocsConfirmPhotosSig;
+  if(c.customerDriverDocsConfirm&&typeof c.customerDriverDocsConfirm==='object'){
+    const cc={...c.customerDriverDocsConfirm};
+    delete cc.at;
+    c.customerDriverDocsConfirm=cc;
+  }
+  if(c.docs&&typeof c.docs==='object'){
+    const docs={};
+    Object.keys(c.docs).forEach(k=>{
+      const d=c.docs[k];
+      if(d&&typeof d==='object'){
+        const dc={...d};
+        delete dc.updatedAt;
+        docs[k]=dc;
+      }else docs[k]=d;
+    });
+    c.docs=docs;
+  }
+  return c;
+}
+/** Снимок state для сравнения «реально изменилось» (без эпохи и служебных полей). */
+function armadaStateComparableSig(){
+  const raw=typeof snapshot==='function'?snapshot():{};
+  const s=structuredClone(raw);
+  delete s.dataEpoch;
+  delete s.savedAt;
+  delete s.appBuild;
+  delete s.adminPresence;
+  delete s.opsLog;
+  if(Array.isArray(s.orders)) s.orders=s.orders.map(armadaStripOrderComparableVolatile);
+  if(Array.isArray(s.shifts)){
+    s.shifts=s.shifts.map(sh=>{
+      const c=structuredClone(sh);
+      delete c.updatedAt;
+      if(Array.isArray(c.orders)) c.orders=c.orders.map(armadaStripOrderComparableVolatile);
+      return c;
+    });
+  }
+  return JSON.stringify(s);
+}
 async function fetchServerState(timeoutMs, opts){
   if(API_BASE){
-    await ensureArmadaApiToken(opts);
+    const authed=await ensureArmadaApiToken(opts);
     try{
       const rec=await fetchServerStateFromApi(timeoutMs);
       if(rec&&rec.payload) return rec;
-      console.warn('API state empty, fallback PB');
-    }catch(err){ console.warn('API state fetch, fallback PB', err); }
+      if(authed&&armadaPbStateFallbackAllowed()) console.warn('API state empty, fallback PB');
+    }catch(err){
+      const msg=String(err&&err.message||err||'');
+      const api401=/\b401\b/.test(msg);
+      if(api401){
+        console.warn('API state fetch 401 (без PocketBase)', err);
+        return null;
+      }
+      if(authed&&armadaPbStateFallbackAllowed()) console.warn('API state fetch, fallback PB', err);
+      else return null;
+    }
   }
+  if(!armadaPbStateFallbackAllowed()) return null;
   return await fetchServerStateFromPb(timeoutMs);
 }
 function parseApiStateConflict(data){
@@ -2932,20 +4057,80 @@ function parseApiStateConflict(data){
   const recordId=data&&(data.recordId||(data.record&&data.record.id))||null;
   return { remotePayload, remoteEpoch, recordId };
 }
-async function patchServerStatePayload(payload, _retry401){
+/** Сообщение пользователю по ignoredAuthFields из PATCH /state. */
+function formatIgnoredAuthFieldsUserMessage(ignored){
+  if(!ignored||!ignored.length) return '';
+  const labels={ phone:'телефон', loginBy:'способ входа', isSuper:'роль супер', pin:'PIN' };
+  const parts=[];
+  for(const row of ignored){
+    const lab=labels[row.field]||row.field;
+    if(row.kind==='admin') parts.push(`админ: ${lab}`);
+    else if(row.kind==='driver') parts.push(`водитель: ${lab}`);
+    else parts.push(lab);
+  }
+  const uniq=[...new Set(parts)];
+  return 'Сервер не принял изменение входа ('+uniq.join(', ')+'). Данные восстановлены с сервера.';
+}
+function applyIgnoredAuthFieldsRollback(ignored, serverPayload, prevPlainPins){
+  if(!ignored||!ignored.length||!serverPayload) return false;
+  let changed=false;
+  const prevPins=prevPlainPins||{};
+  for(const row of ignored){
+    if(row.kind==='admin'){
+      const sa=(serverPayload.admins||[]).find(a=>a.id===row.id);
+      const la=(state.admins||[]).find(a=>a.id===row.id);
+      if(!la) continue;
+      if(row.field==='phone'){
+        if(sa&&sa.phone!==undefined) la.phone=sa.phone;
+        else delete la.phone;
+        changed=true;
+      }else if(row.field==='loginBy'&&sa){
+        la.loginBy=sa.loginBy||'inn';
+        changed=true;
+      }else if(row.field==='isSuper'&&sa){
+        la.isSuper=!!sa.isSuper;
+        changed=true;
+      }else if(row.field==='pin'&&prevPins['admin:'+row.id]!=null){
+        la.pin=prevPins['admin:'+row.id];
+        changed=true;
+      }
+    }else if(row.kind==='driver'&&row.field==='pin'){
+      const ld=(state.drivers||[]).find(d=>d.id===row.id);
+      if(ld&&prevPins['driver:'+row.id]!=null){
+        ld.pin=prevPins['driver:'+row.id];
+        changed=true;
+      }
+    }
+  }
+  if(changed){
+    persistLocalOnly();
+    if(typeof bumpDataEpoch==='function') bumpDataEpoch('ignored-auth-rollback');
+  }
+  return changed;
+}
+function pushResultFromIgnored(ignored, serverPayload, prevPlainPins){
+  if(!ignored||!ignored.length) return null;
+  applyIgnoredAuthFieldsRollback(ignored, serverPayload, prevPlainPins);
+  return {
+    ok:false,
+    ignoredAuthFields:ignored,
+    err:'ignored_auth_fields',
+    message:formatIgnoredAuthFieldsUserMessage(ignored),
+  };
+}
+async function patchServerStatePayload(payload, _retry401, prevPlainPins){
   if(API_BASE){
     try{
-      await ensureArmadaApiToken({ pin:'sync', meta:{ role:'sync' } });
-      const res=await fetchWithTimeout(`${API_BASE}/state`, {
+      await ensureArmadaApiToken({});
+      if(armadaApiTokenRole()==='sync'){
+        return { ok:false, aborted:true, reason:'sync_read_only' };
+      }
+      const res=await fetchArmadaApi('/state', {
         method:'PATCH',
         headers:armadaApiJsonHeaders(),
         body:JSON.stringify({ payload })
-      }, PATCH_TIMEOUT_MS);
+      }, PATCH_TIMEOUT_MS, !!_retry401);
       const data=await res.json().catch(()=>({}));
-      if(res.status===401 && !_retry401){
-        setArmadaApiToken('');
-        return patchServerStatePayload(payload, true);
-      }
       if(res.status===409){
         const c=parseApiStateConflict(data);
         if(c.recordId) pbRecordId=c.recordId;
@@ -2956,6 +4141,11 @@ async function patchServerStatePayload(payload, _retry401){
       if(data.id) pbRecordId=data.id;
       syncPullDegraded=false;
       touchSyncServerOk();
+      const ignored=Array.isArray(data.ignoredAuthFields)?data.ignoredAuthFields:[];
+      if(ignored.length){
+        const ign=pushResultFromIgnored(ignored, data.payload, prevPlainPins);
+        return { ok:false, aborted:false, viaApi:true, ...ign };
+      }
       return { ok:true, aborted:false, viaApi:true };
     }catch(err){
       console.warn('API patch', err);
@@ -3006,7 +4196,7 @@ async function mergeRemoteAheadOnPush(remote){
   if(mergeLocalOrders(localOrders)) merged=true;
   if(typeof mergeLocalInvoices==='function'&&mergeLocalInvoices(localInvoices)) merged=true;
   if(typeof reconcileOrdersAfterSync==='function'&&reconcileOrdersAfterSync()) merged=true;
-  else if(healOrphanOrdersIntoShifts()) merged=true;
+  else if(typeof healOrphanOrdersIntoShifts==='function'&&healOrphanOrdersIntoShifts()) merged=true;
   if(migrateEtoFromMessages()) merged=true;
   if(merged){
     bumpDataEpoch('merge-local-remote-ahead');
@@ -3033,28 +4223,51 @@ async function reconcileBeforePush(){
     pbRecordId=rec.id||pbRecordId;
     const remoteEpoch=Number(remote.dataEpoch)||0;
     const localEpoch=Number(state.dataEpoch)||0;
-    if(localEpoch<remoteEpoch) return false;
-    let changed=false;
-    if(typeof mergeRemoteOrderAssignments==='function'&&mergeRemoteOrderAssignments(remote)) changed=true;
-    if(typeof reconcileOrdersAfterSync==='function'&&reconcileOrdersAfterSync()) changed=true;
-    if(changed){
-      bumpDataEpoch('pre-push-reconcile');
-      persistLocalOnly();
+    const sigBefore=typeof armadaStateComparableSig==='function'?armadaStateComparableSig():'';
+    let shiftClose=false;
+    if(typeof mergeRemoteShiftClosures==='function'&&mergeRemoteShiftClosures(remote)) shiftClose=true;
+    if(localEpoch<remoteEpoch){
+      if(shiftClose){
+        bumpDataEpoch('pre-push-remote-shift-close');
+        persistLocalOnly();
+      }
+      return shiftClose;
     }
-    return changed;
+    if(typeof mergeRemoteOrderAssignments==='function') mergeRemoteOrderAssignments(remote);
+    if(typeof reconcileOrdersAfterSync==='function') reconcileOrdersAfterSync();
+    const sigAfter=typeof armadaStateComparableSig==='function'?armadaStateComparableSig():'';
+    if(sigBefore!==sigAfter){
+      if(typeof bumpDataEpochAuto==='function') bumpDataEpochAuto('pre-push-reconcile');
+      else bumpDataEpoch('pre-push-reconcile');
+      persistLocalOnly();
+      return true;
+    }
+    return false;
   }catch(err){
     console.warn('pre-push reconcile', err);
     return false;
   }
 }
-async function pushServerState(){
+async function pushServerState(prevPlainPins){
   if(API_BASE) await ensureArmadaApiToken({});
+  if(API_BASE&&armadaApiTokenRole()==='sync'){
+    return {aborted:false, syncReadOnly:true};
+  }
   await reconcileBeforePush();
   const payload=snapshot();
   localStorage.setItem(KEY, JSON.stringify(payload));
   try{
-    const pushed=await patchServerStatePayload(payload);
-    if(pushed.ok) return {aborted:false};
+    const pushed=await patchServerStatePayload(payload, false, prevPlainPins);
+    if(pushed.ok) return {aborted:false, ok:true};
+    if(pushed.ignoredAuthFields&&pushed.ignoredAuthFields.length){
+      return {
+        aborted:false,
+        ok:false,
+        ignoredAuthFields:pushed.ignoredAuthFields,
+        message:pushed.message,
+        err:'ignored_auth_fields',
+      };
+    }
     if(pushed.aborted){
       if(pushed.remotePayload) return mergeRemoteAheadOnPush(pushed.remotePayload);
       return {aborted:true, reason:'remote_ahead'};
@@ -3084,24 +4297,33 @@ function persist(){
   }, PERSIST_DEBOUNCE_MS);
 }
 /** Сохранить PIN админа локально и сразу отправить на сервер (без debounce). */
-async function persistAdminPinImmediate(){
+async function persistAdminPinImmediate(prevPlainPins){
   persistLocalOnly();
   if(navigator.onLine===false){
     syncStatus='local';
-    updateDriverNetHint();
+    if(typeof updateDriverNetHint==='function') updateDriverNetHint();
     if(typeof updateSyncHint==='function') updateSyncHint();
     return { ok:false, offline:true };
   }
   clearTimeout(persistTimer);
   persistTimer=null;
   syncStatus='syncing';
-  updateDriverNetHint();
+  if(typeof updateDriverNetHint==='function') updateDriverNetHint();
   if(typeof updateSyncHint==='function') updateSyncHint();
   let lastErr=null;
   for(let attempt=0; attempt<3; attempt++){
     if(attempt>0) await new Promise(r=>setTimeout(r, 800*attempt));
     try{
-      await pushServerStateQueued();
+      const pushRes=await pushServerState(prevPlainPins);
+      if(pushRes&&pushRes.ignoredAuthFields&&pushRes.ignoredAuthFields.length){
+        applySyncPushFailure(new Error(pushRes.message||'ignored'), 'ignored auth');
+        return {
+          ok:false,
+          err:'ignored_auth_fields',
+          message:pushRes.message,
+          ignoredAuthFields:pushRes.ignoredAuthFields,
+        };
+      }
       applySyncPushSuccess();
       return { ok:true };
     }catch(err){
@@ -3111,6 +4333,10 @@ async function persistAdminPinImmediate(){
   }
   applySyncPushFailure(lastErr, 'admin pin push');
   return { ok:false, offline:false, err:lastErr };
+}
+/** Сохранить карточку водителя сразу на сервер (PIN и поля). */
+async function persistDriverCardImmediate(prevPlainPins){
+  return persistAdminPinImmediate(prevPlainPins);
 }
 /** Сохранить справочник компаний на сервер сразу (без debounce). */
 async function persistCompanyImmediate(){
@@ -3164,6 +4390,17 @@ async function initCloudSync(){
     if(rec){
       pbRecordId=rec.id;
       const remote=rec.payload||{};
+      if(armadaRemotePayloadIsLoginBootstrap(remote)){
+        mergeLoginCatalogFromRemote(remote);
+        if(typeof mergeAdminAuthFromRemote==='function') mergeAdminAuthFromRemote(remote, {remoteWinsAuth:true});
+        if(typeof migrateSpaces==='function') migrateSpaces();
+        if(typeof migrateDriverPins==='function') migrateDriverPins();
+        if(typeof migrateAdmins==='function') migrateAdmins();
+        persistLocalOnly();
+        syncStatus='ok';
+        touchSyncServerOk();
+        return;
+      }
       const remoteEpoch=Number(remote.dataEpoch)||0;
       const localEpoch=Number(state.dataEpoch)||0;
       // Сервер — источник правды при старте, если эпоха не ниже локальной.
@@ -3172,7 +4409,7 @@ async function initCloudSync(){
         const localShifts=(state.shifts||[]).map(s=>structuredClone(s));
         const localOrders=(state.orders||[]).map(o=>structuredClone(o));
         applyPayload(remote, {keepShifts:localShifts, keepOrders:localOrders, remoteSeq:true, remoteWinsAuth:true});
-        healOrphanOrdersIntoShifts();
+        if(typeof healOrphanOrdersIntoShifts==='function') healOrphanOrdersIntoShifts();
         migrateEtoFromMessages();
         const assignSnapBefore=typeof orderAssignmentRepairSnap==='function'?orderAssignmentRepairSnap():[];
         if(typeof reconcileOrdersAfterSync==='function') reconcileOrdersAfterSync();
@@ -3209,6 +4446,9 @@ function scheduleAdminRerender(){
 }
 /** Подтянуть новую эпоху с сервера без перезагрузки и без повторного PIN. */
 async function pullRemoteUpdates(reason){
+  const customerPull=reason==='customer-open'||reason==='customer-refresh';
+  if(!armadaBackgroundRemoteSyncEnabled() && !customerPull) return false;
+  if(!armadaBackgroundRemoteSyncEnabled() && reason==='poll') return false;
   if(autoSyncBusy) return false;
   if(!navigator.onLine) return false;
   if(Date.now()<pullBackoffUntil) return false;
@@ -3223,7 +4463,18 @@ async function pullRemoteUpdates(reason){
     const remote=rec.payload||{};
     const remoteEpoch=Number(remote.dataEpoch)||0;
     const localEpoch=Number(state.dataEpoch)||0;
-    if(remoteEpoch<=localEpoch) return false;
+    if(remoteEpoch<=localEpoch){
+      if(typeof mergeRemoteShiftClosures==='function'&&mergeRemoteShiftClosures(remote)){
+        bumpDataEpoch('poll-remote-shift-close');
+        localStorage.setItem(KEY, JSON.stringify(snapshot()));
+        if(currentAdmin&&typeof scheduleAdminRerender==='function') scheduleAdminRerender();
+        touchSyncServerOk();
+        updateSyncHint();
+        console.info('auto-sync', reason, 'shift-close-only epoch', remoteEpoch);
+        return true;
+      }
+      return false;
+    }
     const localShifts=(state.shifts||[]).map(s=>structuredClone(s));
     const localOrders=(state.orders||[]).map(o=>structuredClone(o));
     const localInvoices=(state.invoices||[]).map(i=>structuredClone(i));
@@ -3245,7 +4496,7 @@ async function pullRemoteUpdates(reason){
     if(typeof mergeRemoteOrderAssignments==='function') mergeRemoteOrderAssignments(remote);
     const assignSnapBefore=typeof orderAssignmentRepairSnap==='function'?orderAssignmentRepairSnap():[];
     if(typeof reconcileOrdersAfterSync==='function') reconcileOrdersAfterSync();
-    else healOrphanOrdersIntoShifts();
+    else if(typeof healOrphanOrdersIntoShifts==='function') healOrphanOrdersIntoShifts();
     migrateEtoFromMessages();
     localStorage.setItem(KEY, JSON.stringify(snapshot()));
     if(inAdmin&&typeof pushRepairedAssignmentsIfNeeded==='function') await pushRepairedAssignmentsIfNeeded(assignSnapBefore);
@@ -3266,6 +4517,9 @@ async function pullRemoteUpdates(reason){
           state.messages=richer.length?richer:keepMessages;
           state.step=isEtoDone(open)?'done':(keepUiStep||'idle');
           restoreOrderWorkflow(open);
+        }
+        if(typeof driverNormalizeShiftMessages==='function'){
+          state.messages=driverNormalizeShiftMessages(state.messages);
         }
         // обратно в смену — чтобы не отвалилось при следующем sync
         open.messages=state.messages.slice();

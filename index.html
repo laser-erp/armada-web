@@ -1,7 +1,8 @@
 <!DOCTYPE html>
-<html lang="ru">
+<html lang="ru" translate="no">
 <head>
   <meta charset="UTF-8" />
+  <meta name="google" content="notranslate" />
   <base href="/" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=overlays-content" />
   <title>АРМАДА — учёт перевозок</title>
@@ -217,7 +218,8 @@
                     </span>
                   </div>
                 </div>
-                <label>Габариты, м (Д × Ш × В)</label>
+                <fieldset class="cust-cargo-dims-fieldset">
+                <legend id="cust-req-dims-label">Габариты, м (Д × Ш × В)</legend>
                 <div class="form-triple cust-cargo-dims-row">
                   <input id="cust-req-l" class="cust-cargo-dim-input" inputmode="decimal" placeholder="Д" aria-label="Длина, м" />
                   <span class="cust-dim-sep" aria-hidden="true">×</span>
@@ -225,7 +227,8 @@
                   <span class="cust-dim-sep" aria-hidden="true">×</span>
                   <input id="cust-req-h" class="cust-cargo-dim-input" inputmode="decimal" placeholder="В" aria-label="Высота, м" />
                 </div>
-                <label>Вес груза</label>
+                </fieldset>
+                <label for="cust-weight-value">Вес груза</label>
                 <div class="form-pair">
                   <div><input id="cust-weight-value" inputmode="decimal" placeholder="например 5000 или 5" /></div>
                   <div>
@@ -496,15 +499,15 @@
             </aside>
           </div>
           </div>
-          <div id="cust-chat-panel" class="cust-chat-shell" hidden>
+          <div id="cust-chat-panel" class="cust-chat-shell" hidden translate="no" lang="ru">
             <div class="chat-progress" aria-hidden="true"><div class="chat-progress-fill" id="cust-chat-progress"></div></div>
             <p class="chat-step-hint" id="cust-chat-step-hint"></p>
-            <div class="chat-thread" id="cust-chat-thread" role="log" aria-live="polite"></div>
+            <div class="chat-thread" id="cust-chat-thread" role="region" aria-label="Сообщения чата" aria-live="polite"></div>
             <div class="chat-action-tray" id="cust-chat-tray" hidden></div>
             <div class="cust-chat-footer">
               <div class="chat-compose" id="cust-chat-compose">
-                <input id="cust-chat-input" placeholder="Сообщение…" aria-label="Сообщение" autocomplete="off" enterkeyhint="send" />
-                <button type="button" id="cust-chat-send" aria-label="Отправить">➤</button>
+                <input id="cust-chat-input" placeholder="Сообщение…" aria-label="Сообщение" autocomplete="off" enterkeyhint="enter" lang="ru" />
+                <button type="button" id="cust-chat-send" aria-label="Отправить" title="Отправить" disabled>➤</button>
               </div>
               <div class="error" id="cust-chat-error"></div>
             </div>
@@ -565,6 +568,8 @@
           <button type="button" class="admin-nav-item" data-nav="links" id="admin-links">Ссылки</button>
           <button type="button" class="admin-nav-item" data-nav="documents" id="admin-documents">Документы</button>
           <button type="button" class="admin-nav-item" data-nav="profile" id="admin-profile">Профиль логиста</button>
+          <button type="button" class="admin-nav-item" data-nav="connect-leads" id="admin-connect-leads" style="display:none">Заявки на подключение<span class="admin-filter-badge" id="admin-connect-leads-badge" hidden></span></button>
+          <button type="button" class="admin-nav-item" data-nav="social" id="admin-social" style="display:none">Соцсети</button>
           <button type="button" class="admin-nav-item" data-nav="activity" id="admin-activity" style="display:none">Активность</button>
           <button type="button" class="admin-nav-item" data-nav="billing" id="admin-billing" style="display:none">Тарифы</button>
           <button type="button" class="admin-nav-item" data-nav="plans" id="admin-plans" style="display:none">Планы</button>
@@ -598,9 +603,9 @@
           <button data-filter="inbox" class="admin-filter-inbox">Входящие<span class="admin-filter-badge" id="admin-inbox-badge" hidden></span></button>
           <button data-filter="assigned">Назначен</button>
           <button data-filter="progress">В работе</button>
-          <button data-filter="etrn-sign" class="admin-filter-etrn">ЭТrН · моя подпись<span class="admin-filter-badge" id="admin-etrn-sign-badge" hidden></span></button>
-          <button data-filter="etrn-wait-customer" class="admin-filter-etrn">ЭТrН · T1<span class="admin-filter-badge" id="admin-etrn-t1-badge" hidden></span></button>
-          <button data-filter="etrn-wait-driver" class="admin-filter-etrn">ЭТrН · водитель<span class="admin-filter-badge" id="admin-etrn-driver-badge" hidden></span></button>
+          <button data-filter="etrn-sign" class="admin-filter-etrn">ЭТрН · моя подпись<span class="admin-filter-badge" id="admin-etrn-sign-badge" hidden></span></button>
+          <button data-filter="etrn-wait-customer" class="admin-filter-etrn">ЭТрН · T1<span class="admin-filter-badge" id="admin-etrn-t1-badge" hidden></span></button>
+          <button data-filter="etrn-wait-driver" class="admin-filter-etrn">ЭТрН · водитель<span class="admin-filter-badge" id="admin-etrn-driver-badge" hidden></span></button>
           <button data-filter="closed">Закрыт</button>
         </div>
         <div class="filters" id="admin-owner-filters" aria-label="Фильтр по фирме" hidden></div>
@@ -626,8 +631,10 @@
               <select id="create-copy-from"><option value="">— новый заказ —</option></select>
               <p class="hint" id="create-copy-hint">Выберите заказ — подставим заказчика, маршрут, груз и цены. Дату подачи и водителя укажите заново.</p>
               <p class="form-section-hint">Номер за день и фирма по договору — от неё же берётся парк</p>
-              <label>Номер за день</label>
+              <fieldset class="create-day-fieldset">
+              <legend id="create-day-label">Номер за день</legend>
               <div class="nums" id="create-day"><button type="button" data-cday="1">1</button><button type="button" data-cday="2">2</button><button type="button" data-cday="3">3</button><button type="button" data-cday="4">4</button><button type="button" data-cday="5">5</button></div>
+              </fieldset>
               <label for="create-own-company">От нашей фирмы (договор)</label>
               <select id="create-own-company"></select>
             </div>
@@ -716,7 +723,8 @@
                 <option value="">— не указан —</option>
               </select>
               <p class="form-section-hint">Для биржи и подбора: тоннаж и габариты кузова</p>
-              <label>Грузоподъёмность и кузов (т / Д × Ш × В)</label>
+              <fieldset class="create-req-dims-fieldset">
+              <legend id="create-req-dims-label">Грузоподъёмность и кузов (т / Д × Ш × В)</legend>
               <div class="form-triple cust-cargo-dims-row">
                 <input id="create-req-pay" class="cust-cargo-dim-input" inputmode="decimal" placeholder="т" title="Грузоподъёмность, т" aria-label="Тоннаж, т" />
                 <input id="create-req-l" class="cust-cargo-dim-input" inputmode="decimal" placeholder="Д" title="Длина кузова, м" aria-label="Длина, м" />
@@ -725,6 +733,7 @@
                 <span class="cust-dim-sep" aria-hidden="true">×</span>
                 <input id="create-req-h" class="cust-cargo-dim-input" inputmode="decimal" placeholder="В" title="Высота, м" aria-label="Высота, м" />
               </div>
+              </fieldset>
             </div>
           </div>
           <div class="cust-form-block" data-admin-step="exec">
@@ -853,6 +862,26 @@
     </div>
   </div>
 
+  <div id="admin-social-screen" class="screen">
+    <div class="admin-form-shell">
+      <header class="form-topbar">
+        <button type="button" class="form-back" id="social-back">← Назад</button>
+        <h1>Соцсети</h1>
+      </header>
+      <div class="admin-form-scroll" id="social-form"></div>
+    </div>
+  </div>
+
+  <div id="admin-connect-leads-screen" class="screen">
+    <div class="admin-form-shell">
+      <header class="form-topbar">
+        <button type="button" class="form-back" id="connect-leads-back">← Назад</button>
+        <h1>Заявки на подключение</h1>
+      </header>
+      <div class="admin-form-scroll" id="connect-leads-form"></div>
+    </div>
+  </div>
+
   <div id="admin-activity-screen" class="screen">
     <div class="admin-form-shell">
       <header class="form-topbar">
@@ -956,7 +985,7 @@
     </div>
   </div>
 
-  <div id="driver" class="screen">
+  <div id="driver" class="screen" translate="no" lang="ru">
     <header class="driver-topbar">
       <div class="driver-who">
         <h1 id="driver-title">Водитель</h1>
@@ -987,7 +1016,7 @@
     <div id="eto-panel" class="driver-panel">
       <header class="form-topbar"><button type="button" class="form-back back-driver">← Назад</button><h1>ЕТО</h1></header>
       <div class="panel-body driver-eto-panel">
-        <div id="eto-chat" class="eto-chat" aria-live="polite"></div>
+        <div id="eto-chat" class="eto-chat" aria-live="polite" aria-label="Сообщения смены"></div>
         <div class="driver-eto-body" id="eto-body"></div>
       </div>
     </div>
@@ -1001,7 +1030,8 @@
     </div>
   </div>
 </div>
-  <script src="/entry-route.js?v=2026-10-04-hotfix-driver-order-assigned"></script>
-  <script src="/boot-loader.js?v=2026-10-04-hotfix-driver-order-assigned"></script>
+  <script src="/armada-build.js"></script>
+  <script src="/entry-route.js"></script>
+  <script src="/boot-loader.js"></script>
 </body>
 </html>

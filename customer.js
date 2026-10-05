@@ -161,7 +161,14 @@ function renderCustomerDocsAlerts(co, carrier){
 function syncCustomerDocsTabBadge(){
   const badge=$('cust-docs-badge');
   if(!badge) return;
-  const n=customerDocsTabBadgeCount();
+  let n=customerDocsTabBadgeCount();
+  if(typeof customerOrders==='function'&&typeof findInvoiceByOrderId==='function'&&typeof invoiceReadyForCustomer==='function'){
+    const invPending=customerOrders().filter(o=>{
+      const inv=findInvoiceByOrderId(o.id);
+      return inv&&!invoiceReadyForCustomer(o,inv);
+    }).length;
+    if(invPending>0&&n>0) n=Math.max(0, n-invPending);
+  }
   if(n>0){ badge.hidden=false; badge.textContent=n>9?'9+':String(n); }
   else badge.hidden=true;
 }
@@ -209,6 +216,31 @@ function findCustomerPortalCompany(phone, pin, scope){
       && formatPhone(c.portalPhone)===ph && String(c.portalPin)===p;
   })||null;
 }
+function customerPortalLoginFailMessage(phone, pin, apiFail){
+  const wrongCreds='Неверный телефон или PIN';
+  const portalOff='Неверный телефон или PIN, либо доступ в портал не включён — уточните у перевозчика';
+  if(apiFail&&apiFail.__verifyFail){
+    const err=String(apiFail.error||'').toLowerCase();
+    if(err==='invalid_credentials'||err==='invalid credentials'||apiFail.status===401) return wrongCreds;
+    if(/portal.*disabled|portal_disabled|portal off/i.test(err)) return portalOff;
+    if(apiFail.status===403) return portalOff;
+  }
+  const ph=formatPhone(phone);
+  const p=String(pin||'').trim();
+  const sc=resolvePortalScope(typeof getPortalScope==='function'?getPortalScope():null);
+  const inScope=(state.companies||[]).filter(c=>{
+    if(sc&&sc.companyId && c.id!==sc.companyId) return false;
+    if(sc&&sc.spaceId && c.spaceId!==sc.spaceId) return false;
+    return companyHasRole(c,'customer');
+  });
+  const byPhone=inScope.find(c=>formatPhone(c.portalPhone)===ph);
+  if(byPhone){
+    if(!byPhone.portalEnabled) return portalOff;
+    if(String(byPhone.portalPin||'')!==p) return wrongCreds;
+  }
+  if(navigator.onLine===false) return 'Нет связи — проверьте интернет и повторите';
+  return wrongCreds;
+}
 
 function saveCustomerSession(){
   if(!currentCustomer){ try{ localStorage.removeItem(CUSTOMER_SESSION_KEY); }catch(_){} return; }
@@ -219,6 +251,9 @@ function saveCustomerSession(){
       at:new Date().toISOString()
     }));
   }catch(_){}
+}
+function setArmadaCustomerPortalActive(on){
+  try{ globalThis.ARMADA_CUSTOMER_PORTAL_ACTIVE=!!on; }catch(_){}
 }
 function clearCustomerSession(){
   try{ localStorage.removeItem(CUSTOMER_SESSION_KEY); }catch(_){}
@@ -240,6 +275,7 @@ function restoreCustomerSession(){
 function openCustomerLogin(){
   initPortalScopeFromPage();
   stashCustomerPortalUrlParams();
+  setArmadaCustomerPortalActive(true);
   currentCustomer=null;
   clearCustomerSession();
   const err=$('cust-login-error'); if(err) err.textContent='';
@@ -281,9 +317,22 @@ async function loginCustomer(){
       scopeHint.style.display=label?'block':'none';
     }
   }
-  const co=findCustomerPortalCompany(phone, pin);
+  let co=null;
+  let apiFail=null;
+  if(navigator.onLine!==false && typeof armadaApiVerifyCustomer==='function' && API_BASE){
+    const scope=typeof getPortalScope==='function'?getPortalScope():null;
+    const verified=await armadaApiVerifyCustomer(phone, pin, scope);
+    if(verified&&verified.company){
+      co=verified.company;
+      const local=(state.companies||[]).find(c=>c.id===co.id);
+      if(local) co={...local, ...co, portalPin:local.portalPin||''};
+    }else if(verified&&verified.__verifyFail){
+      apiFail=verified;
+    }
+  }
+  if(!co) co=findCustomerPortalCompany(phone, pin);
   if(!co){
-    if(err) err.textContent='Нет доступа. Попросите перевозчика включить портал в карточке заказчика.';
+    if(err) err.textContent=customerPortalLoginFailMessage(phone, pin, apiFail);
     return;
   }
   currentCustomer={
@@ -291,6 +340,7 @@ async function loginCustomer(){
     spaceId:co.spaceId||null
   };
   saveCustomerSession();
+  setArmadaCustomerPortalActive(true);
   const seen=loadCustomerOrderSeen();
   customerOrders().forEach(o=>{ if(o&&o.id) seen[o.id]=customerOrderStatusTag(o); });
   saveCustomerOrderSeen(seen);
@@ -298,8 +348,13 @@ async function loginCustomer(){
   showCustomerPortal();
 }
 
-function logoutCustomer(){
+async function logoutCustomer(){
+  if(typeof armadaConfirm==='function'){
+    const ok=await armadaConfirm({title:'Выйти из кабинета?', message:'', okLabel:'Выйти'});
+    if(!ok) return;
+  }
   currentCustomer=null;
+  setArmadaCustomerPortalActive(false);
   clearCustomerSession();
   if(getEntryMode()==='customer') openCustomerLogin();
   else show('roles');
@@ -333,7 +388,10 @@ function customerOrderStatusLabel(o){
     return 'Бронь отклонена';
   if(o.onExchange) return 'Диспетчер ищет машину';
   if(o.arrivedAt!=null && o.startOdometer==null && o.departOdometer==null) return 'На погрузке';
-  if(o.startOdometer!=null || o.departOdometer!=null) return 'В работе';
+  if(typeof orderAwaitingFinalize==='function'&&orderAwaitingFinalize(o)) return 'На выгрузке';
+  if(o.startOdometer!=null && typeof orderLeftLoading==='function'&&orderLeftLoading(o)) return 'В работе';
+  if(o.startOdometer!=null||o.arrivedAt) return 'На погрузке';
+  if(o.departOdometer!=null) return 'В пути на погрузку';
   if(o.executorType==='partner') return 'Назначен';
   if(o.driverName && o.driverName!=='Биржа' && o.driverName!=='—' && o.driverName!=='Диспетчер') return 'Назначен';
   if(o.bookStatus==='requested') return 'Ждёт подтверждения брони';
@@ -406,10 +464,35 @@ function maybeNotifyCustomerOrderUpdates(){
   }
 }
 function customerOrders(){
-  if(!currentCustomer) return [];
+  if(!currentCustomer||!String(currentCustomer.companyId||'').trim()) return [];
   const dead=typeof deletedOrderIdSet==='function'?deletedOrderIdSet():new Set();
-  return (state.orders||[]).filter(o=>o && o.customerId===currentCustomer.companyId && !dead.has(o.id))
-    .sort((a,b)=>new Date(b.createdAt||0)-new Date(a.createdAt||0));
+  const co=typeof currentPortalCompany==='function'?currentPortalCompany()
+    :(typeof findCompanyById==='function'?findCompanyById(currentCustomer.companyId):null)
+    ||{id:currentCustomer.companyId, name:currentCustomer.name||'', inn:currentCustomer.inn||''};
+  return (state.orders||[]).filter(o=>{
+    if(!o || dead.has(o.id)) return false;
+    if(typeof orderBelongsToPortalCompany==='function') return orderBelongsToPortalCompany(o, co);
+    return !!(o.customerId && o.customerId===currentCustomer.companyId);
+  }).sort((a,b)=>new Date(b.createdAt||0)-new Date(a.createdAt||0));
+}
+function formatCustomerPortalShortAt(iso){
+  if(!iso) return '';
+  const d=new Date(iso);
+  if(Number.isNaN(d.getTime())) return '';
+  const dd=String(d.getDate()).padStart(2,'0');
+  const mm=String(d.getMonth()+1).padStart(2,'0');
+  const hh=String(d.getHours()).padStart(2,'0');
+  const mi=String(d.getMinutes()).padStart(2,'0');
+  return `${dd}.${mm}, ${hh}:${mi}`;
+}
+function customerOrderCardMetaLine(o){
+  if(!o) return '';
+  const parts=[];
+  if(o.vehicleAt) parts.push(`Подача: ${formatCustomerPortalShortAt(o.vehicleAt)}`);
+  if(o.pricePending) parts.push('Цена: уточнит диспетчер');
+  else if(+o.priceForClient>0) parts.push(`Цена: ${fmt(o.priceForClient)} ₽`);
+  if(o.createdAt) parts.push(`создана ${formatCustomerPortalShortAt(o.createdAt)}`);
+  return parts.join(' · ');
 }
 
 let customerRouteKm=null;
@@ -728,17 +811,17 @@ function customerTransportChecklistSummary(){
 }
 function customerCargoChecklistDetail(){
   const cargo=(($('cust-cargo-text')||{}).value||'').trim();
-  const tons=customerWeightTons();
+  const raw=+(($('cust-weight-value')||{}).value||'').replace(',','.');
+  const unit=(($('cust-weight-unit')||{}).value||'t').trim();
   const parts=[];
-  if(tons>0){
-    const t=tons>=1?(tons%1===0?tons:tons.toFixed(1)):tons.toFixed(2);
-    const unit=(($('cust-weight-unit')||{}).value||'t')==='kg'?'кг':'т';
-    parts.push(`${t} ${unit}`);
+  if(raw>0){
+    if(unit==='kg') parts.push(formatCargoWeightKgRu(raw));
+    else parts.push(formatCargoWeightTonsRu(raw));
   }
   const places=customerCargoPlaces();
   if(places) parts.push(places+' мест');
   const vol=customerCargoVolumeM3();
-  if(vol) parts.push(vol+' м³');
+  if(vol) parts.push(customerFormatVolumeLabel(vol));
   const pack=customerCargoPackaging();
   if(pack&&typeof custPackagingLabel==='function') parts.push(custPackagingLabel(pack));
   if(cargo) parts.push(customerChecklistShortText(cargo,24));
@@ -1038,6 +1121,13 @@ function customerCargoVolumeM3(){
   const raw=+(($('cust-cargo-volume')||{}).value||'').replace(',','.');
   return raw>0?Math.round(raw*10)/10:null;
 }
+function customerFormatVolumeLabel(m3){
+  if(!(m3>0)) return '';
+  const volEl=$('cust-cargo-volume');
+  const fromBody=volEl&&volEl.dataset.manual!=='1';
+  const text=typeof formatVolumeM3Ru==='function'?formatVolumeM3Ru(m3):String(m3).replace('.', ',')+' м³';
+  return fromBody?`${text} (объём кузова)`:text;
+}
 function customerCargoPackaging(){
   return (($('cust-cargo-packaging')||{}).value||'').trim()||null;
 }
@@ -1273,6 +1363,18 @@ function buildCustomerDraftFromForm(){
   };
 }
 
+function customerFleetReqsFromForm(){
+  const payloadTons=customerWeightTons();
+  return {
+    reqPayloadTons:payloadTons>0?payloadTons:null,
+    reqLengthM:numOrNull((($('cust-req-l')||{}).value)),
+    reqWidthM:numOrNull((($('cust-req-w')||{}).value)),
+    reqHeightM:numOrNull((($('cust-req-h')||{}).value)),
+    reqBodyType:customerSelectedBodyType(),
+    vehicleTypeIds:customerSelectedVehicleTypes()
+  };
+}
+
 function paintCustomerFleetOptions(){
   const box=$('cust-fleet-box');
   const sel=$('cust-book-plate');
@@ -1296,7 +1398,7 @@ function paintCustomerFleetOptions(){
   if(box) box.style.display=hasPark?'':'none';
   if(!hasPark || !sel) return;
   const payloadTons=customerWeightTons();
-  const reqs={reqPayloadTons:payloadTons>0?payloadTons:null, reqBodyType:customerSelectedBodyType()};
+  const reqs=typeof customerFleetReqsFromForm==='function'?customerFleetReqsFromForm():{reqPayloadTons:payloadTons>0?payloadTons:null, reqBodyType:customerSelectedBodyType()};
   const at=typeof readCustomerVehicleAt==='function'?readCustomerVehicleAt():null;
   const list=(carrier && typeof availableFleetForCustomer==='function')
     ? availableFleetForCustomer(carrier.id, reqs, at)
@@ -1401,14 +1503,19 @@ function updateCustomerPricePreview(){
   }
   const bits=[];
   if(draft.tripMode) bits.push(tripModeLabel(draft.tripMode));
-  if(draft.reqBodyType) bits.push(bodyTypeLabel(draft.reqBodyType));
-  if(draft.vehicleTypeIds&&draft.vehicleTypeIds.length){
-    bits.push(draft.vehicleTypeIds.map(id=>custVehicleTypeLabel(id)).join(', '));
-  }
+  const vtLabels=draft.vehicleTypeIds&&draft.vehicleTypeIds.length
+    ?draft.vehicleTypeIds.map(id=>custVehicleTypeLabel(id)).filter(Boolean)
+    :[];
+  if(vtLabels.length) bits.push(vtLabels.join(', '));
+  else if(draft.reqBodyType) bits.push(bodyTypeLabel(draft.reqBodyType));
   if(draft.cargoKind) bits.push(cargoKindLabel(draft.cargoKind));
-  if(draft.reqPayloadTons) bits.push(draft.reqPayloadTons+' т');
+  if(draft.reqPayloadTons) bits.push(formatCargoWeightTonsRu(draft.reqPayloadTons));
   if(draft.cargoPlaces) bits.push(draft.cargoPlaces+' мест');
-  if(draft.cargoVolumeM3) bits.push(draft.cargoVolumeM3+' м³');
+  if(draft.cargoVolumeM3){
+    const volText=typeof formatVolumeM3Ru==='function'?formatVolumeM3Ru(draft.cargoVolumeM3):String(draft.cargoVolumeM3).replace('.', ',')+' м³';
+    const tag=draft.cargoVolumeFromBody?' (объём кузова)':'';
+    bits.push(volText+tag);
+  }
   if(draft.cargoPackaging&&typeof custPackagingLabel==='function') bits.push(custPackagingLabel(draft.cargoPackaging));
   const carrier=customerCarrierForForm();
   const s=suggestCustomerOrderPrice(draft);
@@ -1432,8 +1539,7 @@ function updateCustomerPricePreview(){
     ?`Тариф «${esc(carrier.name)}»${s.summary?`: ${esc(s.summary)}`:''}`
     :(s.summary?esc(s.summary):'');
   box.innerHTML=`
-    <div class="calc-row"><span>Ориентир / минимум</span><span><b>${fmt(clientAmount)} ₽</b>${feeNote}</span></div>
-    <div class="calc-row"><span>К оплате перевозчику</span><span><b>${fmt(carrierAmount)} ₽</b>${payLabel?` (${payLabel})`:''}</span></div>
+    <div class="calc-row"><span>Ориентир / минимум</span><span><b>${fmt(clientAmount)}</b> ₽${feeNote}</span></div>
     ${tariffLine?`<div class="hint"><strong>Расчёт:</strong> ${tariffLine}</div>`:''}
     <div class="hint">${esc(bits.filter(Boolean).join(' · '))}</div>
     <div class="hint">${esc(payHint||'Это ориентир. Через логиста в сумму входит его ставка за срочный подбор.')}</div>`;
@@ -1458,6 +1564,7 @@ function showCustomerPortal(){
     openCustomerLogin();
     return;
   }
+  setArmadaCustomerPortalActive(true);
   customerDraftSaveMutedUntil=Date.now()+3000;
   loadCustomerOrderDraftRaw();
   try{
@@ -1486,15 +1593,40 @@ function wireCustomerPortalRefresh(){
     btn.disabled=true;
     const prev=btn.textContent;
     btn.textContent='…';
+    let ok=false;
     try{
-      if(typeof initCloudSync==='function') await initCloudSync().catch(()=>{});
-      if(typeof pullRemoteUpdates==='function') await pullRemoteUpdates('customer-refresh');
+      if(typeof armadaManualServerRefresh==='function'){
+        ok=await armadaManualServerRefresh('customer-refresh', 12000);
+      }else if(typeof pullRemoteUpdates==='function'){
+        ok=navigator.onLine!==false && await pullRemoteUpdates('customer-refresh').catch(()=>false);
+      }
       if(currentCustomer&&typeof renderCustomerPortal==='function') renderCustomerPortal();
-    }finally{
+    }catch(_){ ok=false; }
+    finally{
       btn.disabled=false;
       btn.textContent=prev;
+      if(typeof showCustomerPortalToast==='function'){
+        showCustomerPortalToast(ok?'Обновлено':'Не удалось обновить — нет связи с сервером');
+      }
     }
   };
+}
+function showCustomerPortalToast(text){
+  let el=$('cust-portal-toast');
+  if(!el){
+    el=document.createElement('div');
+    el.id='cust-portal-toast';
+    el.className='cust-portal-toast';
+    el.setAttribute('role','status');
+    el.setAttribute('aria-live','polite');
+    document.body.appendChild(el);
+  }
+  el.textContent=text||'';
+  el.hidden=!text;
+  clearTimeout(showCustomerPortalToast._t);
+  if(text){
+    showCustomerPortalToast._t=setTimeout(()=>{ el.hidden=true; }, 2200);
+  }
 }
 
 function renderCustomerPortal(){
@@ -1559,7 +1691,7 @@ function renderCustomerPortal(){
         <h3>№ ${esc(o.sequentialNumber||'—')} · <span class="order-status ${stCls}">${esc(st)}</span></h3>
         <p class="meta">${esc(routeText(o))}</p>
         <p class="meta">${esc(o.ownCompanyName||'Диспетчер')}${bookLine?` · ${esc(bookLine)}`:''}${o.fulfillment==='direct'?' · свой парк':''}</p>
-        <p class="meta">${driverMeta?`${esc(driverMeta)} · `:''}${o.pricePending?'Цена: уточнит диспетчер · ':o.priceForClient?`Цена: ${fmt(o.priceForClient)} ₽ · `:''}${esc(dateTime(o.createdAt))}</p>
+        <p class="meta">${driverMeta?`${esc(driverMeta)} · `:''}${esc(customerOrderCardMetaLine(o))}</p>
         ${o.priceQuoteSummary?`<p class="meta">Тариф ${esc(o.priceTariffCarrierName||o.ownCompanyName||'перевозчика')}: ${esc(o.priceQuoteSummary)}</p>`:''}
         ${orderReqText(o)?`<p class="meta">${esc(orderReqText(o))}</p>`:''}
         ${typeof customerDriverDocsConfirmHtml==='function'?customerDriverDocsConfirmHtml(o):''}
@@ -1584,6 +1716,9 @@ function renderCustomerPortal(){
   syncCustomerPortalTabUi();
   syncCustomerDocsTabBadge();
   syncCustomerOrdersTabBadge();
+  if(typeof armadaApplyMobileEnterKeyHints==='function') armadaApplyMobileEnterKeyHints($('customer-portal'));
+  const chatInp=$('cust-chat-input');
+  if(chatInp){ chatInp.setAttribute('enterkeyhint','enter'); chatInp.setAttribute('lang','ru'); }
 }
 
 function renderCustomerInvoicesList(){
@@ -1597,11 +1732,15 @@ function renderCustomerInvoicesList(){
   const invoices=typeof customerInvoicesForPortal==='function'?customerInvoicesForPortal(currentCustomer.companyId):[];
   const orders=customerOrders();
   list.innerHTML=invoices.length?invoices.slice(0,15).map(inv=>{
+    const order=(state.orders||[]).find(o=>o.id===inv.orderId)||null;
+    const ready=order&&typeof invoiceReadyForCustomer==='function'&&invoiceReadyForCustomer(order, inv);
     const amt=inv.amount>0?`${fmt(inv.amount)} ₽`:(inv.pricePending?'уточняется':'—');
     return `<div class="card cust-invoice-row" style="margin-bottom:8px">
       <h3 style="margin:0 0 4px;font-size:.9rem">Счёт № ${esc(inv.number)} · заявка № ${esc(inv.orderSeq||'—')}</h3>
       <p class="meta">${esc(inv.route||'')} · ${amt}</p>
-      <button type="button" class="cust-invoice-link" data-invoice-id="${esc(inv.id)}" data-order-id="${esc(inv.orderId||'')}">Открыть счёт с QR</button>
+      ${ready
+        ?`<button type="button" class="cust-invoice-link" data-invoice-id="${esc(inv.id)}" data-order-id="${esc(inv.orderId||'')}">Открыть счёт с QR</button>`
+        :'<p class="hint">QR для оплаты появится после согласования цены.</p>'}
     </div>`;
   }).join(''):(orders.length
     ?'<div class="empty">Счёт формируется — нажмите «Обновить» в шапке или откройте счёт в блоке заявки ниже.</div>'
@@ -1615,7 +1754,8 @@ function renderCustomerDocsByOrder(){
   const orders=customerOrders().slice(0,20);
   list.innerHTML=orders.length?orders.map(o=>{
     const inv=typeof findInvoiceByOrderId==='function'?findInvoiceByOrderId(o.id):null;
-    const invLine=inv?`<p class="meta cust-invoice-row"><button type="button" class="cust-invoice-link" data-invoice-id="${esc(inv.id)}" data-order-id="${esc(o.id)}">Счёт № ${esc(inv.number)} · открыть</button></p>`:'';
+    const invReady=inv&&typeof invoiceReadyForCustomer==='function'&&invoiceReadyForCustomer(o, inv);
+    const invLine=invReady?`<p class="meta cust-invoice-row"><button type="button" class="cust-invoice-link" data-invoice-id="${esc(inv.id)}" data-order-id="${esc(o.id)}">Счёт № ${esc(inv.number)} · открыть</button></p>`:'';
     return `<div class="card" style="margin-bottom:8px">
       <h3 style="margin:0 0 4px;font-size:.9rem">Заявка № ${esc(o.sequentialNumber||'—')} · ${esc(routeText(o))}</h3>
       ${invLine}
@@ -1665,19 +1805,83 @@ function syncCustomerShipperFields(){
   }
 }
 function showCustomerSubmitError(msg){
-  const text=String(msg||'').trim();
+  const raw=String(msg||'').trim();
+  let text=raw?(typeof armadaUserFacingError==='function'?armadaUserFacingError(raw):raw):'';
+  if(text&&typeof armadaLocalizeChatVisibleText==='function') text=armadaLocalizeChatVisibleText(text);
   const formErr=$('cust-form-error');
   const chatErr=$('cust-chat-error');
   if(formErr) formErr.textContent=text;
   if(chatErr&&customerOrderMode()==='chat') chatErr.textContent=text;
 }
-function submitCustomerOrder(){
-  const err=$('cust-form-error');
-  if(customerChat.data&&Object.keys(customerChat.data).length) customerChatApplyToForm();
-  if(!currentCustomer){ showCustomerSubmitError('Войдите снова'); return; }
+function customerChatSetError(msg){
+  const err=$('cust-chat-error');
+  if(!err) return;
+  const raw=String(msg||'').trim();
+  let text=raw?(typeof armadaUserFacingError==='function'?armadaUserFacingError(raw):raw):'';
+  if(text&&typeof armadaLocalizeChatVisibleText==='function') text=armadaLocalizeChatVisibleText(text);
+  err.textContent=text;
+}
+function customerWeightValidationError(){
+  const raw=String(($('cust-weight-value')||{}).value||'').trim();
+  if(!raw) return 'Укажите вес груза';
+  if(/[^\d,.\s-]/.test(raw)) return 'Вес груза: укажите число, не буквы';
+  const n=+raw.replace(',','.');
+  if(Number.isNaN(n)) return 'Вес груза: укажите число';
+  if(n===0) return 'Вес груза не может быть 0';
+  if(n<0) return 'Вес груза не может быть отрицательным';
+  return '';
+}
+function customerDimFieldError(id, label){
+  const raw=String(($(id)||{}).value||'').trim();
+  if(!raw) return '';
+  if(/[^\d,.\s]/.test(raw)) return `${label}: укажите число в метрах`;
+  const n=+raw.replace(',','.');
+  if(Number.isNaN(n)||!(n>0)) return `${label}: укажите число больше 0`;
+  return '';
+}
+function collectCustomerPortalFormErrors(){
+  const errors=[];
+  const add=msg=>{ if(msg&&!errors.includes(msg)) errors.push(msg); };
+  if(!currentCustomer) return ['Войдите снова'];
   const co=findCompanyById(currentCustomer.companyId);
   const carrier=carrierOwnCompanyForSpace(co&&co.spaceId);
-  if(!carrier){ showCustomerSubmitError('Перевозчик не найден'); return; }
+  if(!carrier) return ['Перевозчик не найден'];
+  if(!(($('cust-load')||{}).value||'').trim()) add('Укажите адрес загрузки');
+  if(!(($('cust-unload')||{}).value||'').trim()) add('Укажите адрес выгрузки');
+  const vehicleAt=readCustomerVehicleAt();
+  if(!vehicleAt) add('Укажите дату и время подачи ТС');
+  else if(typeof validateVehicleAtNotPast==='function'){
+    const chk=validateVehicleAtNotPast(vehicleAt);
+    if(!chk.ok) add(chk.msg);
+  }
+  add(customerWeightValidationError());
+  if(!(($('cust-cargo-text')||{}).value||'').trim()) add('Укажите, что за груз');
+  if(customerOrderMode()==='chat'){
+    const items=customerChat.data&&customerChat.data.cargoItems;
+    if(!items||!items.length) add('Добавьте хотя бы один груз в чате');
+  }
+  if(!customerSelectedVehicleTypes().length) add('Выберите хотя бы один тип ТС');
+  add(customerDimFieldError('cust-req-l','Длина'));
+  add(customerDimFieldError('cust-req-w','Ширина'));
+  add(customerDimFieldError('cust-req-h','Высота'));
+  const shipper=readCustomerShipperFields();
+  if(!shipper.shipperSameAsCustomer && !shipper.shipperName) add('Укажите грузоотправителя (кто подписывает ЭТрН на погрузке)');
+  if(!shipper.shipperSameAsCustomer && !shipper.shipperPhone) add('Укажите телефон грузоотправителя для подписи ЭТрН');
+  return errors;
+}
+function submitCustomerOrder(){
+  submitCustomerOrderAsync().catch(()=>{});
+}
+async function submitCustomerOrderAsync(){
+  const err=$('cust-form-error');
+  if(customerChat.data&&Object.keys(customerChat.data).length) customerChatApplyToForm();
+  const formErrors=collectCustomerPortalFormErrors();
+  if(formErrors.length){
+    showCustomerSubmitError(formErrors.join(' · '));
+    return;
+  }
+  const co=findCompanyById(currentCustomer.companyId);
+  const carrier=carrierOwnCompanyForSpace(co&&co.spaceId);
   const load=(($('cust-load')||{}).value||'').trim();
   const unload=(($('cust-unload')||{}).value||'').trim();
   const loadingContactName=(($('cust-loading-contact-name')||{}).value||'').trim();
@@ -1685,33 +1889,24 @@ function submitCustomerOrder(){
   const unloadingContactName=(($('cust-unloading-contact-name')||{}).value||'').trim();
   const unloadingContactPhone=formatPhone((($('cust-unloading-contact-phone')||{}).value||'').trim());
   const shipper=readCustomerShipperFields();
-  if(!shipper.shipperSameAsCustomer && !shipper.shipperName){
-    showCustomerSubmitError('Укажите грузоотправителя (кто подписывает ЭТрН на погрузке)');
-    return;
-  }
-  if(!shipper.shipperSameAsCustomer && !shipper.shipperPhone){
-    showCustomerSubmitError('Укажите телефон грузоотправителя для подписи ЭТрН');
-    return;
-  }
   const contactName=loadingContactName||loadingContactPhone||'';
   const contactPhone=loadingContactPhone||'';
   const cargoText=(($('cust-cargo-text')||{}).value||'').trim();
   syncCustomerPayloadTons();
   const payloadTons=customerWeightTons();
   const vehicleAt=readCustomerVehicleAt();
-  if(!load||!unload){ showCustomerSubmitError('Укажите адреса загрузки и выгрузки'); return; }
-  if(!vehicleAt){ showCustomerSubmitError('Укажите дату и время подачи ТС'); return; }
-  if(customerOrderMode()==='chat'){
-    const items=customerChat.data&&customerChat.data.cargoItems;
-    if(!items||!items.length){ showCustomerSubmitError('Добавьте хотя бы один груз в чате'); return; }
-  }
-  if(!(payloadTons>0)){ showCustomerSubmitError('Укажите вес груза'); return; }
-  if(!cargoText){ showCustomerSubmitError('Укажите, что за груз'); return; }
   const vtypes=customerSelectedVehicleTypes();
-  if(!vtypes.length){ showCustomerSubmitError('Выберите хотя бы один тип ТС'); return; }
   const cargo=customerSelectedCargoKind();
   if(cargo==='food' && !vtypes.some(id=>CUST_REFR_VTYPE_IDS.includes(id)||id==='isotherm')){
-    if(!confirm('Для продуктов обычно нужен изотермический кузов или рефрижератор. Отправить как есть?')) return;
+    const ok=typeof armadaConfirm==='function'
+      ? await armadaConfirm({
+          title:'Отправить заявку?',
+          message:'Для продуктов обычно нужен изотермический кузов или рефрижератор. Отправить как есть?',
+          okLabel:'Отправить',
+          cancelLabel:'Отмена'
+        })
+      : confirm('Для продуктов обычно нужен изотермический кузов или рефрижератор. Отправить как есть?');
+    if(!ok) return;
   }
   const draft=buildCustomerDraftFromForm();
   const quote=suggestCustomerOrderPrice(draft);
@@ -1766,9 +1961,11 @@ function submitCustomerOrderAfterGuard(co, carrier, spaceId, load, unload, conta
     shipperName:shipper.shipperName||'',
     shipperInn:shipper.shipperInn||'',
     shipperPhone:shipper.shipperPhone||'',
+    transportDocMode:shipper.shipperSameAsCustomer!==false?'paper_tn':'etrn',
     cargoDescription:cargoText||'',
     cargoPlaces:draft.cargoPlaces||null,
     cargoVolumeM3:draft.cargoVolumeM3||null,
+    cargoVolumeFromBody:!!(($('cust-cargo-volume')||{}).dataset.manual!=='1' && draft.cargoVolumeM3>0),
     cargoWeightKg:customerCargoWeightKg(),
     cargoItems:Array.isArray(customerChat.data&&customerChat.data.cargoItems)?customerChat.data.cargoItems.map(it=>({...it})):[],
     cargoPackaging:draft.cargoPackaging||null,
@@ -1900,6 +2097,9 @@ const CUST_ORDER_DRAFT_FIELD_IDS=[
 ];
 const CUST_ORDER_DRAFT_CHECK_IDS=['cust-cargo-fragile','cust-cargo-temp','cust-vehicle-date-cal-toggle','cust-load-match-all','cust-unload-match-all','cust-shipper-same'];
 let customerChat={messages:[], stepIndex:0, data:{}, summaryReady:false};
+/** Инициал бота в чате /z — кириллическая «А» (Armada), не латинская A. */
+const CUST_CHAT_BOT_AVATAR='\u0410';
+const CUST_CHAT_GENERIC_NAME_RE=/^(контакт|contact|клиент|заказчик|гость|—|-)$/i;
 let customerDraftSaveTimer=null;
 let customerDraftApplying=false;
 let customerDraftPromptLoaded=null;
@@ -2105,7 +2305,7 @@ function clearCustomerOrderDraft(){
   hideCustomerDraftBanner();
 }
 function customerSubmitSuccessMessage(invoice, order){
-  const name=customerChatFirstName();
+  const name=customerChatUsableFirstName();
   const who=name?`С вами, ${name}, `:''; 
   let html=`${who}приятно иметь дело. Документы по заявке:`;
   html+=`<ul class="cust-doc-submit-list">`;
@@ -2118,7 +2318,7 @@ function customerSubmitSuccessMessage(invoice, order){
   html+=`<li><strong>Договор</strong> — ${fcSt==='signed'?'подписан':fcSt==='pending'?'ожидает подписания (вкладка «Бух доки»)':'будет подготовлен'}</li>`;
   html+=`<li><strong>Заявка на перевозку</strong> — после назначения ТС и водителя</li>`;
   html+=`<li><strong>Акт</strong> — после закрытия заказа</li>`;
-  html+=`<li><strong>ЭТрН</strong> — T1 подписывает грузоотправитель на погрузке${order&&order.shipperSameAsCustomer===false?' (отдельная ссылка отправится грузоотправителю)':''}, QR у водителя в пути</li>`;
+  html+=`<li><strong>ЭТрН</strong> — T1 грузоотправитель до выезда с грузом (КЭП); T2 перевозчик на погрузке; T3 грузополучатель; T4 перевозчик на выгрузке. Выезд со стоянки без T1. Без КЭП — бумажная ТН</li>`;
   html+=`</ul>`;
   if(invoice){
     html+=`<button type="button" class="chat-invoice-link cust-invoice-link" data-invoice-id="${esc(invoice.id)}" data-order-id="${esc(order&&order.id||'')}">Открыть счёт №${esc(invoice.number)}</button>`;
@@ -2313,7 +2513,6 @@ function applyCustomerOrderDraft(draft){
     const mode=draft.mode==='chat'?'chat':'form';
     setCustomerOrderMode(mode);
     if(mode==='chat') initCustomerChatWizard(false);
-    else if(chat.data&&Object.keys(chat.data).length) customerChatApplyToForm();
     const load=(($('cust-load')||{}).value||'').trim();
     const unload=(($('cust-unload')||{}).value||'').trim();
     if(load&&unload) refreshCustomerRouteKm();
@@ -2607,7 +2806,7 @@ function customerChatNum(val){
 function customerChatCargoItemWeightLabel(it){
   const w=customerChatNum(it.weightValue);
   if(!w) return '';
-  return it.weightUnit==='kg'?`${w} кг`:`${w} т`;
+  return it.weightUnit==='kg'?formatCargoWeightKgRu(w):formatCargoWeightTonsRu(w);
 }
 function customerChatCargoItemDimsLabel(it){
   const l=customerChatNum(it.reqLengthM);
@@ -2626,7 +2825,7 @@ function customerChatCargoItemMeta(it){
   const places=customerChatNum(it.places);
   if(places) bits.push(places+' мест');
   const vol=customerChatNum(it.volume);
-  if(vol) bits.push(vol+' м³');
+  if(vol) bits.push(customerFormatVolumeLabel(vol));
   return bits.join(' · ')||'—';
 }
 function customerChatCargoListHtml(items){
@@ -2800,7 +2999,7 @@ function customerChatApplyCargoItemsToForm(items){
   if(dimW) dimW.value=agg.reqWidthM?String(agg.reqWidthM):'';
   if(dimH) dimH.value=agg.reqHeightM?String(agg.reqHeightM):'';
   const placesEl=$('cust-cargo-places');
-  if(placesEl) placesEl.value=agg.cargoPlaces?String(agg.cargoPlaces):'';
+  if(placesEl && agg.cargoPlaces!=null && agg.cargoPlaces>0) placesEl.value=String(agg.cargoPlaces);
   const volEl=$('cust-cargo-volume');
   if(volEl && agg.cargoVolumeM3) volEl.value=String(agg.cargoVolumeM3);
   syncCustomerPayloadTons();
@@ -2900,7 +3099,7 @@ function customerChatBodyLabel(vtype){
   const hit=CUST_CHAT_BODY_CHIPS.find(c=>c.vtype===vtype);
   if(hit) return hit.label;
   const meta=typeof custVehicleTypeMeta==='function'?custVehicleTypeMeta(vtype):null;
-  if(meta) return meta.ati||meta.label||vtype;
+  if(meta) return typeof custVehicleTypeDisplayLabel==='function'?custVehicleTypeDisplayLabel(meta):(meta.label||meta.ati||vtype);
   return typeof custVehicleTypeLabel==='function'?custVehicleTypeLabel(vtype):vtype;
 }
 function customerChatFilterVtypeSuggest(raw){
@@ -2919,8 +3118,9 @@ function customerChatFilterVtypeSuggest(raw){
     btn.setAttribute('role','option');
     btn.dataset.vtype=t.id;
     btn.dataset.idx=String(i);
-    btn.textContent=t.ati||t.label||t.id;
-    const pick=()=>customerChatSelectBody(t.id, t.ati||t.label||t.id, false);
+    btn.textContent=typeof custVehicleTypeDisplayLabel==='function'?custVehicleTypeDisplayLabel(t):(t.label||t.ati||t.id);
+    const pickLabel=typeof custVehicleTypeDisplayLabel==='function'?custVehicleTypeDisplayLabel(t):(t.label||t.ati||t.id);
+    const pick=()=>customerChatSelectBody(t.id, pickLabel, false);
     btn.onmousedown=e=>{ e.preventDefault(); pick(); };
     btn.onpointerdown=e=>{ e.preventDefault(); pick(); };
     list.appendChild(btn);
@@ -3044,13 +3244,27 @@ function customerChatContactPerson(){
   const co=findCompanyById(currentCustomer.companyId);
   if(!co) return null;
   const phone=formatPhone(currentCustomer.phone||'');
+  let matched=null;
   if(phone && (co.contacts||[]).length){
     for(const ct of co.contacts){
       const ph=typeof contactPhone==='function'?contactPhone(ct):'';
-      if(ph && formatPhone(ph)===phone) return ct;
+      if(ph && formatPhone(ph)===phone){
+        matched=ct;
+        break;
+      }
     }
   }
-  return typeof primaryContact==='function'?primaryContact(co):null;
+  const usable=n=>{
+    const nm=String(n||'').trim();
+    return nm && !CUST_CHAT_GENERIC_NAME_RE.test(nm) && !/^контакт/i.test(nm);
+  };
+  if(matched && usable(matched.name)) return matched;
+  const primary=typeof primaryContact==='function'?primaryContact(co):null;
+  if(primary && usable(primary.name)) return primary;
+  for(const ct of co.contacts||[]){
+    if(usable(ct.name)) return ct;
+  }
+  return matched||primary||null;
 }
 function customerChatFirstNameFromFull(full){
   const parts=String(full||'').trim().split(/\s+/).filter(Boolean);
@@ -3067,8 +3281,20 @@ function customerChatFirstName(){
   const person=customerChatContactPerson();
   return customerChatFirstNameFromFull(person&&person.name);
 }
+function customerChatUsableFirstName(){
+  const name=String(customerChatFirstName()||'').trim();
+  if(!name || CUST_CHAT_GENERIC_NAME_RE.test(name)) return '';
+  if(/^контакт/i.test(name)) return '';
+  return name;
+}
+function customerChatRefreshStoredBotPrompts(){
+  customerChat.messages.forEach(m=>{
+    if(m.role!=='bot'||!m.stepId||m.stepId==='submitted'||m.stepId==='summary') return;
+    if(typeof customerChatBotPrompt==='function') m.html=customerChatBotPrompt(m.stepId);
+  });
+}
 function customerChatNamePrefix(){
-  const name=customerChatFirstName();
+  const name=customerChatUsableFirstName();
   return name?`${esc(name)}, `:'';
 }
 function customerChatBotPrompt(stepId){
@@ -3084,7 +3310,7 @@ function customerChatBotPrompt(stepId){
   if(stepId==='load') return '<strong>Откуда забираем груз?</strong> Введите адрес внизу или выберите из недавних.';
   if(stepId==='unload') return '<strong>Куда везём?</strong> Введите адрес внизу или выберите из недавних.';
   if(stepId==='loadContact') return '<strong>Контакт на погрузке?</strong> Имя и телефон — введите внизу или выберите из недавних.';
-  if(stepId==='shipper') return '<strong>Вы грузоотправитель?</strong> Грузоотправитель подписывает ЭТрН (T1) на погрузке. Заказчик перевозки может быть другим.';
+  if(stepId==='shipper') return '<strong>Вы грузоотправитель?</strong> T1 в ЭТрН на погрузке — с КЭП. Заказчик перевозки может быть другим. Без КЭП — бумажная накладная на погрузке, не ссылка в приложении.';
   if(stepId==='unloadContact') return '<strong>Контакт на выгрузке?</strong> Введите внизу, выберите из недавних или «пропустить».';
   if(stepId==='body') return '<strong>Какой кузов?</strong> Нажмите тип ниже или напишите внизу: тент, реф…';
   if(stepId==='loadMethod'){
@@ -3278,11 +3504,20 @@ function customerChatRenderMessages(){
   const thread=$('cust-chat-thread');
   if(!thread) return;
   thread.innerHTML=customerChat.messages.map(m=>{
+    const loc=typeof armadaLocalizeChatVisibleText==='function'?armadaLocalizeChatVisibleText:(t=>t);
+    const locHtml=typeof armadaLocalizeChatHtml==='function'?armadaLocalizeChatHtml:(h=>h);
     if(m.role==='user'){
-      return `<div class="chat-msg user"><span class="chat-avatar">Вы</span><div class="chat-bubble">${esc(m.text)}</div></div>`;
+      return `<div class="chat-msg user"><span class="chat-avatar">Вы</span><div class="chat-bubble">${esc(loc(m.text))}</div></div>`;
     }
-    let html=`<div class="chat-msg bot"><span class="chat-avatar">А</span><div class="chat-bubble">${m.html}`;
-    if(m.stepId==='summary' && customerChat.summaryReady) html+=customerChatSummaryHtml();
+    let bubbleHtml=m.html;
+    if(m.stepId&&m.stepId!=='summary'&&m.stepId!=='submitted'&&typeof customerChatBotPrompt==='function'){
+      bubbleHtml=customerChatBotPrompt(m.stepId);
+    }
+    let html=`<div class="chat-msg bot"><span class="chat-avatar">${CUST_CHAT_BOT_AVATAR}</span><div class="chat-bubble">${locHtml(bubbleHtml)}`;
+    if(m.stepId==='summary' && customerChat.summaryReady){
+      const sum=customerChatSummaryHtml();
+      html+=typeof armadaLocalizeChatHtml==='function'?armadaLocalizeChatHtml(sum):sum;
+    }
     html+='</div></div>';
     return html;
   }).join('');
@@ -3375,9 +3610,9 @@ function customerChatWireWidgets(stepId){
     document.querySelectorAll('[data-chat-when]').forEach(btn=>{
       btn.onclick=()=>{
         const days=+(btn.getAttribute('data-chat-when')||1)||1;
-        customerChat.data.date=customerChatOffsetDate(days);
-        customerChat.data.time='09:00';
-        delete customerChat.data.pendingWhen;
+        const parsed={date:customerChatOffsetDate(days), time:'09:00'};
+        const err=$('cust-chat-error');
+        if(!customerChatApplyWhenParts(parsed, err)) return;
         customerChatAdvance(customerChatWhenLabel());
       };
     });
@@ -3572,6 +3807,31 @@ function customerChatShowCompose(step){
   if(step.id==='shipper'&&customerChat.data.shipperAwaitingOther) return true;
   return false;
 }
+function customerChatComposeTextTrimmed(){
+  const inp=$('cust-chat-input');
+  return inp?String(inp.value||'').trim():'';
+}
+function customerChatCanSendNow(){
+  const step=CUST_CHAT_STEPS[customerChat.stepIndex];
+  if(!step || !customerChatShowCompose(step)) return false;
+  return !!customerChatComposeTextTrimmed();
+}
+function customerChatEnterSubmitAllowed(){
+  if(customerChatCanSendNow()) return true;
+  const step=CUST_CHAT_STEPS[customerChat.stepIndex];
+  if(step&&step.id==='cargo'){
+    const items=customerChat.data.cargoItems||[];
+    if(!customerChatComposeTextTrimmed()&&items.length) return true;
+  }
+  return false;
+}
+function customerChatUpdateSendButton(){
+  const send=$('cust-chat-send');
+  if(!send) return;
+  const can=customerChatCanSendNow();
+  send.disabled=!can;
+  send.setAttribute('aria-disabled', can?'false':'true');
+}
 function customerChatParseWhenInput(raw){
   let s=String(raw||'').trim();
   if(!s) return null;
@@ -3588,6 +3848,25 @@ function customerChatParseWhenInput(raw){
   if(typeof normalizeTimeHmInput==='function') time=normalizeTimeHmInput(time)||'09:00';
   return {date, time};
 }
+function customerChatWhenPartsToIso(parsed){
+  if(!parsed||!parsed.date) return null;
+  if(typeof fromRuDateTimeParts==='function') return fromRuDateTimeParts(parsed.date, parsed.time||'09:00');
+  return null;
+}
+function customerChatApplyWhenParts(parsed, errEl){
+  if(typeof validateVehicleAtNotPast==='function'){
+    const chk=validateVehicleAtNotPast(customerChatWhenPartsToIso(parsed));
+    if(!chk.ok){
+      if(errEl) errEl.textContent=chk.msg;
+      return false;
+    }
+  }
+  customerChat.data.date=parsed.date;
+  customerChat.data.time=parsed.time||'09:00';
+  delete customerChat.data.pendingWhen;
+  if(errEl) errEl.textContent='';
+  return true;
+}
 function customerChatHandleWhenCompose(raw){
   const err=$('cust-chat-error');
   const inp=$('cust-chat-input');
@@ -3597,10 +3876,7 @@ function customerChatHandleWhenCompose(raw){
     if(err) err.textContent='Дата: ДД.ММ.ГГГГ, 9:00 — или кнопка «Завтра»';
     return;
   }
-  if(err) err.textContent='';
-  customerChat.data.date=parsed.date;
-  customerChat.data.time=parsed.time;
-  delete customerChat.data.pendingWhen;
+  if(!customerChatApplyWhenParts(parsed, err)) return;
   if(inp) inp.value='';
   customerChatAdvance(customerChatWhenLabel());
 }
@@ -3629,11 +3905,11 @@ function customerChatHandleBodyCompose(raw){
   const matches=customerChatVtypeMatches(raw);
   if(matches.length===1){
     if(inp) inp.value='';
-    customerChatSelectBody(matches[0].id, matches[0].ati||matches[0].label, true);
+    customerChatSelectBody(matches[0].id, typeof custVehicleTypeDisplayLabel==='function'?custVehicleTypeDisplayLabel(matches[0]):(matches[0].label||matches[0].ati), true);
     return;
   }
   if(matches.length>1){
-    if(err) err.textContent='Уточните: '+matches.slice(0,3).map(m=>m.ati||m.label).join(', ');
+    if(err) err.textContent='Уточните: '+matches.slice(0,3).map(m=>typeof custVehicleTypeDisplayLabel==='function'?custVehicleTypeDisplayLabel(m):(m.label||m.ati)).join(', ');
     return;
   }
   if(err) err.textContent='Тип не найден — нажмите чип или «тент», «реф»';
@@ -3692,6 +3968,7 @@ function customerChatUpdateCompose(){
   }
   if(compose) compose.classList.toggle('is-visible', !!show);
   if(show) customerChatWireComposeInput(step);
+  customerChatUpdateSendButton();
 }
 function customerChatAdvance(userText){
   const err=$('cust-chat-error'); if(err) err.textContent='';
@@ -3810,19 +4087,28 @@ function initCustomerChatWizard(forceReset){
       customerChatAddBot('cargo');
     }else{
       customerChat.data=customerChatMigrateData(customerChat.data);
+      customerChatRefreshStoredBotPrompts();
     }
   }
+  customerChatRefreshStoredBotPrompts();
   customerChatRenderAll();
   const send=$('cust-chat-send');
   const inp=$('cust-chat-input');
   if(send && !send.dataset.wired){
     send.dataset.wired='1';
-    send.onclick=customerChatHandleTextInput;
+    send.onclick=()=>{ if(send.disabled) return; customerChatHandleTextInput(); };
   }
   if(inp && !inp.dataset.wired){
     inp.dataset.wired='1';
-    inp.onkeydown=e=>{ if(e.key==='Enter'){ e.preventDefault(); customerChatHandleTextInput(); } };
+    inp.oninput=()=>customerChatUpdateSendButton();
+    inp.onkeydown=e=>{
+      if(e.key==='Enter'){
+        e.preventDefault();
+        if(customerChatEnterSubmitAllowed()) customerChatHandleTextInput();
+      }
+    };
   }
+  if(typeof armadaRuFieldValidity==='function') armadaRuFieldValidity($('cust-chat-input'), 'Введите сообщение');
 }
 function wireCustomerOrderMode(){
   document.querySelectorAll('.cust-order-mode-tab').forEach(btn=>{
@@ -3885,7 +4171,7 @@ function wireCustomerPortal(){
       if(id==='cust-cargo-volume') el.dataset.manual='1';
       syncCustomerPayloadTons();
       updateCustomerPricePreview();
-      if(id==='cust-weight-value') paintCustomerFleetOptions();
+      if(id==='cust-weight-value'||id==='cust-req-l'||id==='cust-req-w'||id==='cust-req-h') paintCustomerFleetOptions();
     };
   });
   const volEl=$('cust-cargo-volume');

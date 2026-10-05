@@ -257,6 +257,16 @@ body.landing-modal-open{overflow:hidden}
 .landing-order-datetime{display:grid;grid-template-columns:1fr 1fr;gap:12px}
 .landing-order-legal{margin:8px 0 0;font-size:.78rem;color:var(--muted)}
 .landing-order-legal a{color:inherit}
+.landing-order-law-warn{
+  margin:10px 0 0;padding:10px 12px;font-size:.8rem;line-height:1.45;
+  border:1px solid #f59e0b;background:#fffbeb;color:#92400e;border-radius:8px;white-space:pre-wrap
+}
+.landing-hero--order .landing-hero-badge{text-transform:none;letter-spacing:.02em;font-size:.78rem}
+.landing-order-form .field-label{display:inline}
+.landing-order-form .order-field-invalid{border-color:#ef4444;box-shadow:0 0 0 1px rgba(239,68,68,.35)}
+.landing-order-form legend .field-label{display:inline}
+.landing-order-legal-check{display:flex;gap:8px;align-items:center;font-size:.78rem;margin-top:10px}
+.landing-order-legal-check input{margin-top:0;flex-shrink:0}
 .landing-order-success{margin-top:0}
 @media(max-width:520px){
   .landing-order-datetime{grid-template-columns:1fr}
