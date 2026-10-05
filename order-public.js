@@ -1,6 +1,6 @@
 /* order.html — публичная заявка с armada.sx (CSP: без inline) */
 (function () {
-  var BUILD = (typeof globalThis !== 'undefined' && globalThis.ARMADA_APP_BUILD) || '2026-10-04-qa-v73';
+  var BUILD = (typeof globalThis !== 'undefined' && globalThis.ARMADA_APP_BUILD) || '2026-10-05-pr158-f1';
   var OFFLINE_MSG = 'Нет связи с сервером. Заявка не отправлена — проверьте интернет и нажмите «Отправить заявку» ещё раз.';
   var form = null;
   var statusEl = null;
