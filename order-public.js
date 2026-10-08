@@ -1,6 +1,6 @@
 /* order.html — публичная заявка с armada.sx (CSP: без inline) */
 (function () {
-  var BUILD = (typeof globalThis !== 'undefined' && globalThis.ARMADA_APP_BUILD) || '2026-10-05-pr158-f1';
+  var BUILD = (typeof globalThis !== 'undefined' && globalThis.ARMADA_APP_BUILD) || '2026-10-06-owner-drv-2';
   var OFFLINE_MSG = 'Нет связи с сервером. Заявка не отправлена — проверьте интернет и нажмите «Отправить заявку» ещё раз.';
   var form = null;
   var statusEl = null;
@@ -221,8 +221,19 @@
     return t ? d + 'T' + t : d;
   }
 
+  function parsePublicCargoWeightKg(raw) {
+    if (typeof armadaVehiclePodbor !== 'undefined' && armadaVehiclePodbor.parsePublicCargoWeightKg) {
+      return armadaVehiclePodbor.parsePublicCargoWeightKg(raw);
+    }
+    var s = String(raw != null ? raw : '').trim().replace(/\s/g, '').replace(',', '.');
+    if (!s) return null;
+    var n = parseFloat(s);
+    if (!(n > 0) || isNaN(n)) return null;
+    return Math.round(n * 1000);
+  }
+
   function readForm(params) {
-    var cargoKg = parseInt((qs('order-cargo-weight') && qs('order-cargo-weight').value || '').replace(/\D/g, ''), 10);
+    var cargoKg = parsePublicCargoWeightKg(qs('order-cargo-weight') && qs('order-cargo-weight').value);
     return {
       kind: 'transport',
       company: (qs('order-company') && qs('order-company').value || '').trim(),
@@ -302,8 +313,8 @@
         var v = (phoneEl.value || '').trim();
         if (!v) return;
         if (!normalizePhoneDigits(v)) {
-          markFieldError('order-phone', 'Укажите телефон: 10 цифр, например +7 965 073-00-02');
-          showStatus('Укажите телефон: 10 цифр, например +7 965 073-00-02', false);
+          markFieldError('order-phone', 'Укажите телефон: 10 цифр, например +7 999 000-00-00');
+          showStatus('Укажите телефон: 10 цифр, например +7 999 000-00-00', false);
         }
       });
     }
@@ -355,7 +366,7 @@
     }
     if (!selectedVtype) errors.push('Выберите тип транспорта');
     if (!data.company) add('order-company', 'Укажите компанию или ФИО');
-    if (!normalizePhoneDigits(data.phone)) add('order-phone', 'Укажите телефон: 10 цифр, например +7 965 073-00-02');
+    if (!normalizePhoneDigits(data.phone)) add('order-phone', 'Укажите телефон: 10 цифр, например +7 999 000-00-00');
     if (!data.contactName) add('order-name', 'Укажите контактное лицо');
     if (!data.loadAddress) add('order-address', isRentalOnlyVtype() ? 'Укажите адрес подачи' : 'Укажите адрес загрузки');
     if (!isRentalOnlyVtype() && !data.unloadAddress) add('order-unload', 'Укажите адрес выгрузки');

@@ -1,6 +1,6 @@
 /* АРМАДА PWA — HTML network-first + offline fallback; кэш привязан к APP_BUILD (?v= в URL sw.js) */
 /** Ревизия оболочки SW (поднимать при деплое вместе с APP_BUILD). */
-const SW_SHELL_REV = 'v102';
+const SW_SHELL_REV = 'v108';
 const SW_BUILD = (() => {
   try {
     return new URL(self.location.href).searchParams.get('v') || 'dev';
@@ -59,6 +59,9 @@ const SHELL = [
   './icons/icon-192.png',
   './icons/icon-512.png',
   './logo.png',
+  './space-modules.js',
+  './owner-driver.js',
+  './admin-entitlements.js',
 ];
 
 self.addEventListener('install', (event) => {

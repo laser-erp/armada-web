@@ -485,6 +485,12 @@ function formatCustomerPortalShortAt(iso){
   const mi=String(d.getMinutes()).padStart(2,'0');
   return `${dd}.${mm}, ${hh}:${mi}`;
 }
+function customerOrderVehicleAtPastWarning(o){
+  if(!o||!o.vehicleAt) return '';
+  const t=Date.parse(o.vehicleAt);
+  if(Number.isNaN(t)||t>=Date.now()) return '';
+  return '<p class="meta hint cust-order-past-at">Дата подачи в прошлом — уточните у диспетчера при необходимости.</p>';
+}
 function customerOrderCardMetaLine(o){
   if(!o) return '';
   const parts=[];
@@ -1322,6 +1328,32 @@ function customerSelectedFulfillment(){
   return (($('cust-fulfillment')||{}).value||'logist')==='direct'?'direct':'logist';
 }
 
+function customerWhenNeededMode(){
+  return String((($('cust-when-needed')||{}).value||'specific')).trim()||'specific';
+}
+function customerPricingUrgencyFromForm(){
+  const mode=customerWhenNeededMode();
+  if(mode==='now') return 'very_urgent';
+  if(mode==='within_2h') return 'urgent';
+  return 'standard';
+}
+function customerMatchingFleetVehicles(carrier){
+  const reqs=customerFleetReqsFromForm();
+  const pseudo={
+    reqPayloadTons:reqs.reqPayloadTons,
+    reqBodyType:reqs.reqBodyType,
+    reqLengthM:reqs.reqLengthM,
+    reqWidthM:reqs.reqWidthM,
+    reqHeightM:reqs.reqHeightM,
+    vehicleTypeIds:customerSelectedVehicleTypes()
+  };
+  return (state.vehicles||[]).filter(v=>{
+    if(carrier&&carrier.id&&v.companyId!==carrier.id) return false;
+    if(typeof vehicleFitsOrder==='function') return vehicleFitsOrder(v, pseudo);
+    return true;
+  }).slice(0,20);
+}
+
 function buildCustomerDraftFromForm(){
   const co=findCompanyById(currentCustomer&&currentCustomer.companyId);
   const carrier=carrierOwnCompanyForSpace(co&&co.spaceId||currentCustomer&&currentCustomer.spaceId);
@@ -1359,7 +1391,9 @@ function buildCustomerDraftFromForm(){
     workHours:null,
     overnightNights:0,
     overnightStorageRateCash:null,
-    priceOffer:payRaw?+payRaw:null
+    priceOffer:payRaw?+payRaw:null,
+    whenNeeded:customerWhenNeededMode(),
+    pricingUrgency:customerPricingUrgencyFromForm()
   };
 }
 
@@ -1411,9 +1445,11 @@ function paintCustomerFleetOptions(){
     }).join('');
   if(prev && list.some(v=>v.plate===prev)) sel.value=prev;
   if(hint){
-    hint.textContent=list.length
+    let msg=list.length
       ?`Свободно ${list.length}. Запрос брони подтвердит перевозчик — после этого дата подачи будет в календаре.`
       :'Сейчас свободных машин нет — диспетчер подберёт как можно скорее (свой парк или партнёры).';
+    if(typeof orderVehicleWeightUnknown==='function'&&orderVehicleWeightUnknown(reqs)) msg+=' Вес не указан — подбор по тоннажу не применяется.';
+    hint.textContent=msg;
   }
   if(box) box.style.display='';
 }
@@ -1538,11 +1574,37 @@ function updateCustomerPricePreview(){
   const tariffLine=carrier
     ?`Тариф «${esc(carrier.name)}»${s.summary?`: ${esc(s.summary)}`:''}`
     :(s.summary?esc(s.summary):'');
+  const mockOrder={
+    pricingUrgency:draft.pricingUrgency||'standard',
+    routeDistanceKm:draft.routeKm||customerRouteKm||null,
+    vehicleAt:readCustomerVehicleAt()||null
+  };
+  let fleetHint='';
+  const fr=typeof globalThis!=='undefined'?globalThis.armadaFleetRates:null;
+  const fleet=customerMatchingFleetVehicles(carrier);
+  if(fr&&fleet.length){
+    const sample=fr.calculateOrderPrice(fleet[0], carrier, mockOrder, {distanceKm:mockOrder.routeDistanceKm||40, now:new Date()});
+    if(sample&&sample.surchargeLabels&&sample.surchargeLabels.length){
+      fleetHint=`<div class="hint">${esc(sample.surchargeLabels.join(' · '))}</div>`;
+    }
+    if(sample&&sample.lines&&sample.lines.length>1){
+      const br=sample.lines.map(l=>`${esc(l.label)} ${fmt(l.amount)} ₽`).join(' + ');
+      fleetHint+=`<div class="hint">По тарифу ТС: ${br} = <b>${fmt(sample.total)}</b> ₽</div>`;
+    }
+  }
   box.innerHTML=`
     <div class="calc-row"><span>Ориентир / минимум</span><span><b>${fmt(clientAmount)}</b> ₽${feeNote}</span></div>
     ${tariffLine?`<div class="hint"><strong>Расчёт:</strong> ${tariffLine}</div>`:''}
+    ${fleetHint}
     <div class="hint">${esc(bits.filter(Boolean).join(' · '))}</div>
     <div class="hint">${esc(payHint||'Это ориентир. Через логиста в сумму входит его ставка за срочный подбор.')}</div>`;
+  const qbox=$('cust-quote-variants');
+  if(qbox){
+    const ui=typeof globalThis!=='undefined'?globalThis.armadaFleetRatesUi:null;
+    if(ui&&ui.renderCustomerQuoteBox&&fleet.length){
+      ui.renderCustomerQuoteBox(mockOrder, fleet, carrier, qbox);
+    }else qbox.innerHTML='';
+  }
   const priceEl=$('cust-price');
   if(priceEl && priceEl.dataset.auto!=='0'){
     priceEl.value=String(clientAmount);
@@ -1655,6 +1717,15 @@ function renderCustomerPortal(){
     paintCustomerFleetOptions();
   });
   wireCustomerTimePresets();
+  const whenEl=$('cust-when-needed');
+  if(whenEl&&!whenEl.dataset.wired){
+    whenEl.dataset.wired='1';
+    whenEl.onchange=()=>{
+      updateCustomerPricePreview();
+      paintCustomerFleetOptions();
+      scheduleCustomerOrderDraftSave();
+    };
+  }
   if((loadEl&&loadEl.value) && (unloadEl&&unloadEl.value)) refreshCustomerRouteKm();
   else updateCustomerTripModeDisplay(carrier?financeForCompanyId(carrier.id):normalizeFinance(state.finance));
   paintCustomerFleetOptions();
@@ -1692,6 +1763,7 @@ function renderCustomerPortal(){
         <p class="meta">${esc(routeText(o))}</p>
         <p class="meta">${esc(o.ownCompanyName||'Диспетчер')}${bookLine?` · ${esc(bookLine)}`:''}${o.fulfillment==='direct'?' · свой парк':''}</p>
         <p class="meta">${driverMeta?`${esc(driverMeta)} · `:''}${esc(customerOrderCardMetaLine(o))}</p>
+        ${customerOrderVehicleAtPastWarning(o)}
         ${o.priceQuoteSummary?`<p class="meta">Тариф ${esc(o.priceTariffCarrierName||o.ownCompanyName||'перевозчика')}: ${esc(o.priceQuoteSummary)}</p>`:''}
         ${orderReqText(o)?`<p class="meta">${esc(orderReqText(o))}</p>`:''}
         ${typeof customerDriverDocsConfirmHtml==='function'?customerDriverDocsConfirmHtml(o):''}
@@ -1995,6 +2067,8 @@ function submitCustomerOrderAfterGuard(co, carrier, spaceId, load, unload, conta
     cargoKind:draft.cargoKind||null,
     tripMode:draft.tripMode||null,
     routeKm:draft.routeKm||null,
+    whenNeeded:draft.whenNeeded||null,
+    pricingUrgency:draft.pricingUrgency||'standard',
     reqLengthM:numOrNull((($('cust-req-l')||{}).value)),
     reqWidthM:numOrNull((($('cust-req-w')||{}).value)),
     reqHeightM:numOrNull((($('cust-req-h')||{}).value)),
@@ -2331,18 +2405,16 @@ function customerSubmitSuccessMessage(invoice, order){
   }
   return html;
 }
-function customerWireInvoiceLinks(root){
-  (root||document).querySelectorAll('[data-invoice-id]').forEach(btn=>{
-    if(btn.dataset.invoiceWired) return;
-    btn.dataset.invoiceWired='1';
-    btn.onclick=e=>{
-      e.preventDefault();
-      const id=btn.getAttribute('data-invoice-id');
-      const orderId=btn.getAttribute('data-order-id');
-      if(typeof openCustomerInvoice==='function') openCustomerInvoice(id, orderId);
-      else if(typeof downloadCustomerInvoice==='function') downloadCustomerInvoice(id);
-    };
-  });
+function customerOpenInvoiceFromEl(btn){
+  if(!btn) return;
+  const id=btn.getAttribute('data-invoice-id');
+  const orderId=btn.getAttribute('data-order-id');
+  if(typeof openCustomerInvoice==='function'){ openCustomerInvoice(id, orderId); return; }
+  if(id&&typeof downloadCustomerInvoice==='function'){ downloadCustomerInvoice(id); return; }
+  alert('Не удалось открыть счёт — обновите страницу (кнопка «Обновить» в шапке).');
+}
+function customerWireInvoiceLinks(_root){
+  /* клики по .cust-invoice-link — делегирование в wireCustomerPortal */
 }
 function customerChatAfterOrderSubmit(order, invoice){
   customerChat.messages.push({
@@ -4141,6 +4213,17 @@ function wireCustomerPortal(){
   $('cust-login-ok')&&($('cust-login-ok').onclick=loginCustomer);
   $('cust-login-pin')&&($('cust-login-pin').onkeydown=e=>{ if(e.key==='Enter') loginCustomer(); });
   $('cust-portal-back')&&($('cust-portal-back').onclick=logoutCustomer);
+  const portalShell=$('customer-portal');
+  if(portalShell&&!portalShell.dataset.invoiceDelegated){
+    portalShell.dataset.invoiceDelegated='1';
+    portalShell.addEventListener('click', e=>{
+      const btn=e.target.closest('.cust-invoice-link');
+      if(!btn||!portalShell.contains(btn)) return;
+      e.preventDefault();
+      e.stopPropagation();
+      customerOpenInvoiceFromEl(btn);
+    });
+  }
   const portalTabs=$('cust-portal-tabs');
   if(portalTabs&&!portalTabs.dataset.wired){
     portalTabs.dataset.wired='1';

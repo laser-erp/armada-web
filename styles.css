@@ -42,6 +42,38 @@
       min-height:0;overflow:hidden
     }
     .driver-panel.show{display:flex;animation:panelIn .2s ease}
+    .owner-driver-h2{font-size:1rem;margin:14px 0 8px}
+    .owner-driver-mod-list{list-style:none;padding:0;margin:0}
+    .owner-driver-mod-list li{padding:8px 10px;border-radius:10px;background:var(--card);margin-bottom:6px;font-size:.9rem}
+    .owner-driver-mod-list li.off{opacity:.65}
+    .owner-driver-hint{font-size:.85rem}
+    #driver.owner-driver-active .driver-nav:not(.owner-driver-nav){display:none!important}
+    #driver.owner-driver-active #driver-home,
+    #driver.owner-driver-active #chat,
+    #driver.owner-driver-active #input-bar{display:none!important}
+    .owner-driver-main{
+      flex:1;min-height:0;display:flex;flex-direction:column;overflow:hidden;
+      padding:10px 14px calc(8px + var(--driver-tab-clear) + env(safe-area-inset-bottom,0));
+    }
+    .owner-driver-view{flex:1;min-height:0;overflow-y:auto;-webkit-overflow-scrolling:touch}
+    .owner-driver-summary{margin-top:8px}
+    .owner-driver-form .fld{display:flex;flex-direction:column;gap:4px;margin-bottom:10px;font-size:.9rem}
+    .owner-driver-form input,.owner-driver-form select{font-size:16px;padding:10px;border-radius:10px;border:1px solid var(--line)}
+    .owner-driver-trip-list{display:flex;flex-direction:column;gap:8px;margin-top:8px}
+    .owner-driver-trip{padding:10px 12px;border-radius:12px;background:var(--card)}
+    .owner-driver-trip-head{display:flex;justify-content:space-between;gap:8px;margin-bottom:4px}
+    .owner-driver-list{display:flex;flex-direction:column;gap:6px;margin-top:10px}
+    .owner-driver-list-row{display:block;width:100%;text-align:left;padding:10px 12px;border-radius:12px;border:1px solid var(--line);background:var(--card);cursor:pointer;font:inherit}
+    .owner-driver-nav button{font-size:.72rem;padding:6px 4px}
+    .owner-driver-trip-docs{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
+    .owner-driver-trip-docs .secondary{font-size:.78rem;padding:6px 10px;flex:1 1 auto;min-width:5.5rem}
+    .owner-driver-section{margin-top:14px;padding-top:10px;border-top:1px solid var(--line)}
+    .owner-driver-h3{font-size:.92rem;margin:0 0 8px}
+    .owner-driver-svc-log{padding:8px 10px;border-radius:10px;background:var(--card);margin-bottom:6px}
+    .owner-driver-svc-log-head{display:flex;justify-content:space-between;gap:6px;align-items:flex-start}
+    .owner-driver-fuel-period{display:grid;grid-template-columns:1fr 1fr;gap:8px;align-items:end;margin:8px 0}
+    .owner-driver-fuel-period .fld{margin-bottom:0}
+    .owner-driver-fuel-summary .m{padding:8px 10px;border-radius:10px;background:var(--card);margin-bottom:8px}
     .driver-panel .form-topbar{flex-shrink:0}
     .driver-panel .panel-body{
       background:transparent;flex:1;min-height:0;overflow-y:auto;overflow-x:hidden;

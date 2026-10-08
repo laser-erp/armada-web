@@ -420,6 +420,12 @@ function normalizeCompany(c){
   out.vatPayer=(c.vatPayer==='vat')?'vat':'none';
   const bank=normalizeCompanyBank(c);
   if(bank.bankName||bank.bankBik||bank.bankAccount||bank.bankCorrAccount) out.bank=bank;
+  if(c.acceptanceRules&&typeof c.acceptanceRules==='object') out.acceptanceRules=c.acceptanceRules;
+  if(c.cancellationPolicy&&typeof c.cancellationPolicy==='object') out.cancellationPolicy=c.cancellationPolicy;
+  if(c.rating&&typeof c.rating==='object') out.rating=c.rating;
+  if(typeof globalThis!=='undefined'&&globalThis.armadaFleetRates&&globalThis.armadaFleetRates.normalizeCompanyPolicies){
+    globalThis.armadaFleetRates.normalizeCompanyPolicies(out);
+  }
   return out;
 }
 /** Перевозчик на ОСН с НДС или без (УСН и т.п.) */
@@ -1013,8 +1019,11 @@ function normalizeAdmin(a){
   if(!a||typeof a!=='object') return null;
   const name=String(a.name||'').trim(); if(!name) return null;
   const pin=String(a.pin||'').trim();
-  if(!pin) return null;
-  const out={id:a.id||uuid(), name, pin, isSuper:!!a.isSuper, spaceId:a.spaceId||null};
+  const hasApiBase=typeof API_BASE==='string'&&!!API_BASE;
+  // С armada-api PIN проверяется на сервере; в localStorage админы без pin (см. auth.js).
+  if(!pin && !hasApiBase) return null;
+  const out={id:a.id||uuid(), name, isSuper:!!a.isSuper, spaceId:a.spaceId||null};
+  if(pin) out.pin=pin;
   if(a.mustChangePin) out.mustChangePin=true;
   const phone=typeof formatPhone==='function'?formatPhone(a.phone||''):String(a.phone||'').trim();
   if(phone) out.phone=phone;
@@ -1026,120 +1035,6 @@ function normalizeAdmin(a){
   if(signature) out.signatureDataUrl=signature;
   if(a.skipDriverMirror) out.skipDriverMirror=true;
   return out;
-}
-function migrateAdmins(){
-  state.admins=(state.admins||[]).map(normalizeAdmin).filter(Boolean);
-  // Вычистить удалённые тестовые учётки (Диспетчер и т.п.)
-  state.admins=state.admins.filter(a=>{
-    const nm=(a.name||'').trim().toLowerCase();
-    return !RETIRED_ADMIN_IDS.has(a.id) && !RETIRED_ADMIN_NAMES.has(nm);
-  });
-  // Сид только если админов ещё нет — случайный PIN (без публичного recovery).
-  if(!state.admins.length){
-    if(!state.settings||typeof state.settings!=='object') state.settings={};
-    state.admins=[{
-      id:'admin-super', name:'Наволоцкий Е.Н.', pin:generateAdminPin(), isSuper:true, mustChangePin:true
-    }];
-  }
-  state.admins.forEach(a=>{
-    if(a.id==='admin-super' || (a.isSuper && (a.name||'').toLowerCase()==='супер админ')){
-      a.name='Наволоцкий Е.Н.';
-      if(a.id==='admin-super' || !a.id) a.id='admin-super';
-      a.isSuper=true;
-    }
-    const pin=String(a.pin||'').trim();
-    if(WEAK_ADMIN_PINS.has(pin)) a.mustChangePin=true;
-    const drv=(state.drivers||[]).find(d=>samePersonName(d.name,a.name));
-    if(!a.phone && drv&&drv.phone){
-      const ph=typeof formatPhone==='function'?formatPhone(drv.phone):String(drv.phone||'').trim();
-      if(ph) a.phone=ph;
-    }
-    if((a.id==='admin-super' || a.isSuper) && a.phone && a.loginBy!=='phone') a.loginBy='phone';
-    if(!a.loginBy){
-      if(samePersonName(a.name,'Нечаев А.С.') && (a.phone || (drv&&drv.phone))) a.loginBy='phone';
-      else if(a.isSuper && a.phone) a.loginBy='phone';
-      else a.loginBy='inn';
-    }
-  });
-  if(!state.admins.some(a=>a.isSuper)){
-    const first=state.admins[0];
-    if(first) first.isSuper=true;
-    else state.admins.push({id:'admin-super', name:'Наволоцкий Е.Н.', pin:generateAdminPin(), isSuper:true, mustChangePin:true});
-  }
-  state.adminLogins=Array.isArray(state.adminLogins)?state.adminLogins:[];
-  state.adminPresence=Array.isArray(state.adminPresence)?state.adminPresence:[];
-  stripRecoverParamFromUrl();
-}
-function stripRecoverParamFromUrl(){
-  try{
-    const u=new URL(location.href);
-    if(!u.searchParams.has('recover') && !u.searchParams.has('reset')) return;
-    u.searchParams.delete('recover');
-    u.searchParams.delete('reset');
-    const next=u.pathname+(u.search||'')+u.hash;
-    history.replaceState(history.state,'',next);
-  }catch(_){}
-}
-function isRecoveryOrWeakAdminPin(pin){
-  const p=String(pin||'').trim();
-  if(!p) return true;
-  if(typeof WEAK_ADMIN_PINS!=='undefined' && WEAK_ADMIN_PINS.has(p)) return true;
-  return false;
-}
-function markSuperPinChangedByUser(){
-  if(!state.settings||typeof state.settings!=='object') state.settings={};
-  state.settings.superPinChangedByUser=true;
-  delete state.settings.superPinRecoveryNotice;
-}
-function mergeAdminAuthFromRemote(p, opts){
-  const remoteWinsAuth=!!(opts&&opts.remoteWinsAuth);
-  const remoteAdmins=(Array.isArray(p.admins)?p.admins:[]).map(normalizeAdmin).filter(Boolean)
-    .filter(a=>!RETIRED_ADMIN_IDS.has(a.id) && !RETIRED_ADMIN_NAMES.has((a.name||'').trim().toLowerCase()));
-  if(remoteAdmins.length){
-    const localById=new Map((state.admins||[]).filter(a=>a&&a.id).map(a=>[a.id,a]));
-    const merged=remoteAdmins.map(r=>{
-      const loc=localById.get(r.id);
-      if(!loc) return r;
-      const locPin=String(loc.pin||'').trim();
-      const remPin=String(r.pin||'').trim();
-      // На другом устройстве в localStorage мог остаться старый PIN — при загрузке с сервера берём серверный.
-      if(!remoteWinsAuth && locPin && locPin!==remPin && !isRecoveryOrWeakAdminPin(locPin)){
-        const out={...r, pin:locPin};
-        if(loc.mustChangePin) out.mustChangePin=true;
-        else delete out.mustChangePin;
-        return out;
-      }
-      return r;
-    });
-    localById.forEach((loc,id)=>{
-      if(!merged.some(a=>a.id===id)) merged.push(loc);
-    });
-    state.admins=merged;
-  }
-  const byId=new Map();
-  (state.adminLogins||[]).forEach(e=>{ if(e&&e.id) byId.set(e.id,e); });
-  (Array.isArray(p.adminLogins)?p.adminLogins:[]).forEach(e=>{
-    if(!e||!e.id) return;
-    const prev=byId.get(e.id);
-    if(!prev || Date.parse(e.at||0)>=Date.parse(prev.at||0)) byId.set(e.id,e);
-  });
-  state.adminLogins=[...byId.values()].sort((a,b)=>Date.parse(b.at||0)-Date.parse(a.at||0)).slice(0,120);
-  const byDev=new Map();
-  (state.adminPresence||[]).forEach(e=>{ if(e&&e.deviceId) byDev.set(e.deviceId,e); });
-  (Array.isArray(p.adminPresence)?p.adminPresence:[]).forEach(e=>{
-    if(!e||!e.deviceId) return;
-    const prev=byDev.get(e.deviceId);
-    if(!prev || Date.parse(e.lastSeen||0)>=Date.parse(prev.lastSeen||0)) byDev.set(e.deviceId,e);
-  });
-  // не затираем своё свежее присутствие
-  const my=byDev.get(adminDeviceId());
-  if(currentAdmin && my && Date.parse(my.lastSeen||0)<Date.now()-5000){
-    byDev.set(adminDeviceId(), {
-      deviceId:adminDeviceId(), adminId:currentAdmin.id, adminName:currentAdmin.name,
-      isSuper:!!currentAdmin.isSuper, lastSeen:new Date().toISOString(), screen:my.screen||'admin'
-    });
-  }
-  state.adminPresence=[...byDev.values()];
 }
 function isSuperAdmin(){ return !!(currentAdmin&&currentAdmin.isSuper); }
 function driversOwnedByAdminId(adminId){
@@ -1421,20 +1316,38 @@ function orderReqText(o){
   }
   return bits.join(' · ');
 }
+function vehiclePodborHooks(){
+  return {
+    missingBlock:typeof vehicleMissingAssignBlockParams==='function'?vehicleMissingAssignBlockParams:null,
+    bodyMatch:typeof vehicleBodyTypeMatchesOrder==='function'?vehicleBodyTypeMatchesOrder:null
+  };
+}
+function orderForVehicleFitCheck(o){
+  if(typeof armadaVehiclePodbor!=='undefined'&&armadaVehiclePodbor.orderForVehicleFitCheck) return armadaVehiclePodbor.orderForVehicleFitCheck(o);
+  return o;
+}
+function orderVehicleWeightUnknown(o){
+  if(typeof armadaVehiclePodbor!=='undefined'&&armadaVehiclePodbor.orderVehicleWeightUnknown) return armadaVehiclePodbor.orderVehicleWeightUnknown(o);
+  return !(+(o&&o.reqPayloadTons)>0);
+}
+function sortFleetVehiclesByClosestPayload(vehicles){
+  if(typeof armadaVehiclePodbor!=='undefined'&&armadaVehiclePodbor.sortFleetVehiclesByClosestPayload) return armadaVehiclePodbor.sortFleetVehiclesByClosestPayload(vehicles);
+  return (vehicles||[]).slice();
+}
+function fleetVehiclesMatchingOrder(vehicles, order){
+  const hooks=vehiclePodborHooks();
+  if(typeof armadaVehiclePodbor!=='undefined'&&armadaVehiclePodbor.fleetVehiclesMatchingOrder){
+    return armadaVehiclePodbor.fleetVehiclesMatchingOrder(vehicles, order, hooks);
+  }
+  return (vehicles||[]).filter(v=>vehicleFitsOrder(v, order));
+}
 /** ТС подходит, если каждое указанное требование закрыто его характеристикой. */
 function vehicleFitsOrder(v, o){
-  if(!v || !o) return false;
-  if(typeof vehicleMissingAssignBlockParams==='function' && vehicleMissingAssignBlockParams(v).length) return false;
-  if(typeof vehicleBodyTypeMatchesOrder==='function' && !vehicleBodyTypeMatchesOrder(v, o)) return false;
-  const pairs=[['reqPayloadTons','payloadTons'],['reqLengthM','bodyLengthM'],['reqWidthM','bodyWidthM'],['reqHeightM','bodyHeightM']];
-  for(const [req,field] of pairs){
-    const need=+o[req];
-    if(!(need>0)) continue;
-    const have=+v[field];
-    if(!(have>0)) continue;
-    if(have+1e-9<need) return false;
+  if(typeof armadaVehiclePodbor!=='undefined'&&armadaVehiclePodbor.vehicleFitsOrderCore){
+    return armadaVehiclePodbor.vehicleFitsOrderCore(v, o, vehiclePodborHooks());
   }
-  return true;
+  if(!v || !o) return false;
+  return false;
 }
 function readOrderRequirementsFromCreate(){
   return {
@@ -1618,21 +1531,23 @@ function vehicleBusyAt(plate, atIso, exceptOrderId){
   });
 }
 function availableFleetForCustomer(companyId, reqs, atIso){
-  return fleetVehiclesForCompany(companyId).filter(v=>{
+  const fitReqs=reqs?orderForVehicleFitCheck(reqs):null;
+  const base=fleetVehiclesForCompany(companyId).filter(v=>{
     if(typeof vehicleMissingAssignBlockParams==='function' && vehicleMissingAssignBlockParams(v).length) return false;
-    if(reqs && typeof orderHasVehicleRequirements==='function' && orderHasVehicleRequirements(reqs) && !vehicleFitsOrder(v, reqs)) return false;
     return !vehicleBusyAt(v.plate, atIso);
   });
+  if(fitReqs && typeof orderHasVehicleRequirements==='function' && orderHasVehicleRequirements(fitReqs)){
+    return fleetVehiclesMatchingOrder(base, fitReqs);
+  }
+  return sortFleetVehiclesByClosestPayload(base);
 }
 function freeOwnFleetForOrder(o, exceptOrderId){
   if(!o) return [];
   const firmId=typeof adminFleetCompanyId==='function'?adminFleetCompanyId(o)
     :(o.ownCompanyId||((typeof currentOwnCompany==='function'&&currentOwnCompany())||{}).id);
   if(!firmId) return [];
-  return fleetVehiclesForCompany(firmId).filter(v=>{
-    if(!vehicleFitsOrder(v, o)) return false;
-    return !vehicleBusyAt(v.plate, o.vehicleAt, exceptOrderId||o.id);
-  });
+  const base=fleetVehiclesForCompany(firmId).filter(v=>!vehicleBusyAt(v.plate, o.vehicleAt, exceptOrderId||o.id));
+  return fleetVehiclesMatchingOrder(base, orderForVehicleFitCheck(o));
 }
 function myCatalogDrivers(){
   if(!currentAdmin) return [];
@@ -2610,7 +2525,7 @@ function normalizeFleetVehicle(v){
   if(!v) return null;
   const plate=String(v.plate||'').trim();
   if(!plate) return null;
-  return {
+  const out={
     id:v.id||uuid(),
     plate,
     consumptionPer100Km:(+v.consumptionPer100Km>0)?+v.consumptionPer100Km:20,
@@ -2634,6 +2549,19 @@ function normalizeFleetVehicle(v){
     serviceIntervals:(Array.isArray(v.serviceIntervals)?v.serviceIntervals:[]).map(normalizeServiceInterval).filter(Boolean),
     maintenanceLogs:(Array.isArray(v.maintenanceLogs)?v.maintenanceLogs:[]).map(normalizeMaintenanceLog).filter(Boolean)
   };
+  if(v.modelId) out.modelId=String(v.modelId).trim();
+  if(v.catalogType) out.catalogType=String(v.catalogType).trim();
+  if(v.catalogCorrectedByOwner) out.catalogCorrectedByOwner=true;
+  if(v.catalogBenchmark&&typeof v.catalogBenchmark==='object') out.catalogBenchmark=v.catalogBenchmark;
+  if(v.crane&&typeof v.crane==='object') out.crane=v.crane;
+  if(v.rates&&typeof v.rates==='object') out.rates=v.rates;
+  if(v.schedule&&typeof v.schedule==='object') out.schedule=v.schedule;
+  if(v.location&&typeof v.location==='object') out.location=v.location;
+  if(v.rating&&typeof v.rating==='object') out.rating=v.rating;
+  if(typeof globalThis!=='undefined'&&globalThis.armadaFleetRates&&globalThis.armadaFleetRates.normalizeVehicleFleetMeta){
+    globalThis.armadaFleetRates.normalizeVehicleFleetMeta(out);
+  }
+  return out;
 }
 function fleetVehicleById(id){
   return (state.vehicles||[]).find(v=>v.id===id)||null;
@@ -3539,10 +3467,9 @@ function removeOrdersByIds(ids){
   if(state.shift && Array.isArray(state.shift.orders)){
     state.shift.orders=state.shift.orders.filter(x=>!delSet.has(x.id));
   }
-  compactSequentialNumbers();
   return deletedOrders.length;
 }
-/** Удалить заказы (включая закрытые). Номера после compactSequentialNumbers снова 1…N — следующий новый = seq+1. */
+/** Удалить заказы (включая закрытые). № в документах не сжимаем; следующий новый = state.seq+1. */
 function deleteOrders(ids){
   const list=Array.isArray(ids)?ids.filter(Boolean):[];
   if(!list.length) return {ok:false, deleted:0, message:'Ничего не выбрано'};
@@ -3571,18 +3498,16 @@ function cancelOrder(id, reason){
   if(o.startOdometer!=null && !o.cancelledAt){
     if(!confirm('Заказ уже в работе. Точно отменить?')) return false;
   }
-  removeOrdersByIds([id]);
+  o.cancelledAt=new Date().toISOString();
+  o.cancelReason=String(reason||'Отменён').trim();
+  // Не removeOrdersByIds / detachOrderReferences: billing, счета, чат и № других заказов не трогаем.
   bumpDataEpoch('cancelOrder');
   persist();
   return true;
 }
+/** Boot/heal: убрать только tombstone из списков; отменённые по cancelledAt не трогаем. */
 function purgeCancelledOrders(){
-  const before=(state.orders||[]).length;
-  state.orders=stripCancelledFromOrders(state.orders);
-  state.shifts.forEach(s=>{
-    if(Array.isArray(s.orders)) s.orders=stripCancelledFromOrders(s.orders);
-  });
-  return before!==(state.orders||[]).length;
+  return purgeDeadOrdersEverywhere();
 }
 function canStartAssignedMessage(){
   const shift=syncOpenShiftRuntime();
@@ -5194,7 +5119,7 @@ function healAllOrders(){
       ensureOrderTimeStamps(o);
     });
   });
-  if(compactSequentialNumbers()) changed=true;
+  if(syncSequentialCounter()) changed=true;
   return changed;
 }
 function kmParkingToEnd(o){
@@ -5662,80 +5587,6 @@ function applyEntrySkin(screenId){
     </div>`;
   const center=screen.querySelector('.center');
   if(center) center.insertBefore(aside, center.firstChild);
-}
-function openAdminLogin(){
-  openAdminLoginAsync().catch(err=>console.warn('openAdminLogin', err));
-}
-async function openAdminLoginAsync(){
-  migrateAdmins();
-  if(currentAdmin && typeof isAdminPinOk==='function' && isAdminPinOk()){
-    clearEntrySkin();
-    show('admin');
-    renderAdmin();
-    if(window.ArmadaOnboarding) ArmadaOnboarding.maybeAdmin();
-    return;
-  }
-  if(canAutoRestoreAdmin()){
-    clearEntrySkin();
-    show('admin');
-    renderAdmin();
-    if(window.ArmadaOnboarding) ArmadaOnboarding.maybeAdmin();
-    return;
-  }
-  if(adminEntryRequiresPin() && !(typeof isAdminPinOk==='function' && isAdminPinOk())) currentAdmin=null;
-  const innIn=$('admin-login-inn');
-  const pinIn=$('pin-input');
-  const hadInn=innIn&&innIn.value.trim();
-  const hadPin=pinIn&&pinIn.value.trim();
-  if(innIn&&!hadInn) innIn.value='';
-  if(pinIn&&!hadPin) pinIn.value='';
-  const pinErr=$('pin-error');
-  if(pinErr) pinErr.textContent='';
-  show('admin-pin');
-  wireAdminLoginHandlers();
-  try{ applyEntrySkin('admin-pin'); }catch(err){ console.warn('applyEntrySkin', err); }
-  const btn=$('pin-ok');
-  if(btn) btn.disabled=false;
-  if(navigator.onLine!==false && typeof refreshAdminListForLogin==='function'){
-    const listRefreshGen=globalThis.ARMADA_ADMIN_LIST_REFRESH_GEN||0;
-    refreshAdminListForLogin().then(synced=>{
-      if((globalThis.ARMADA_ADMIN_LIST_REFRESH_GEN||0)!==listRefreshGen) return;
-      if(!synced&&pinErr&&!pinErr.textContent){
-        pinErr.textContent='Не удалось обновить список с сервера — войдите по телефону или ИНН и PIN';
-      }
-    }).catch(err=>{
-      console.warn('admin login list', err);
-      if((globalThis.ARMADA_ADMIN_LIST_REFRESH_GEN||0)!==listRefreshGen) return;
-      if(pinErr&&!pinErr.textContent){
-        pinErr.textContent='Сервер не ответил — попробуйте войти по телефону или ИНН и PIN';
-      }
-    });
-  }
-}
-function wireAdminLoginHandlers(){
-  if(typeof loginAdmin!=='function') return;
-  const ok=$('pin-ok');
-  if(ok){
-    ok.type='button';
-    ok.onclick=()=>loginAdmin();
-  }
-  const pin=$('pin-input');
-  if(pin){
-    pin.onkeydown=e=>{
-      if(e.key==='Enter'){ e.preventDefault(); loginAdmin(); }
-    };
-  }
-  const inn=$('admin-login-inn');
-  if(inn){
-    inn.onkeydown=e=>{
-      if(e.key==='Enter'){ e.preventDefault(); loginAdmin(); }
-    };
-  }
-  const back=$('pin-back');
-  if(back && typeof backFromEntryLogin==='function'){
-    back.type='button';
-    back.onclick=()=>backFromEntryLogin();
-  }
 }
 function wireDriverLoginHandlers(){
   if(typeof loginDriver!=='function') return;

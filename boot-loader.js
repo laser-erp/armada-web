@@ -1,6 +1,27 @@
 /* АРМАДА — внешний загрузчик (CSP script-src 'self' без unsafe-inline) */
 (function () {
-  var APP_BUILD = (typeof globalThis !== 'undefined' && globalThis.ARMADA_APP_BUILD) || '2026-10-05-pr158-f1';
+  var APP_BUILD = (typeof globalThis !== 'undefined' && globalThis.ARMADA_APP_BUILD) || '2026-10-06-owner-drv-2';
+  var OWNER_DRIVER_PREVIEW_KEY = 'armada_owner_driver_preview_v1';
+  var OWNER_DRIVER_PREVIEW_PARAM = 'ownerDriverPreview';
+
+  function armadaOwnerDriverPreviewFromUrl() {
+    try {
+      var q = new URLSearchParams(location.search || '');
+      if (q.get(OWNER_DRIVER_PREVIEW_PARAM) === '1') sessionStorage.setItem(OWNER_DRIVER_PREVIEW_KEY, '1');
+      if (q.get(OWNER_DRIVER_PREVIEW_PARAM) === '0') sessionStorage.removeItem(OWNER_DRIVER_PREVIEW_KEY);
+    } catch (_) {}
+  }
+
+  function armadaOwnerDriverPreviewEnabled() {
+    armadaOwnerDriverPreviewFromUrl();
+    try {
+      return sessionStorage.getItem(OWNER_DRIVER_PREVIEW_KEY) === '1';
+    } catch (_) {
+      return false;
+    }
+  }
+
+  armadaOwnerDriverPreviewFromUrl();
 
   window.__armadaBootDone = false;
 
@@ -50,9 +71,13 @@
     var isA = /\/(a)(\/|$)/.test(p);
     var isZ = /\/(z)(\/|$)/.test(p);
     var files = ['store.js', 'billing.js'];
-    if (isV) files.push('qrcode.min.js', 'entry-share.js', 'print-window.js', 'order-documents.js', 'doc-templates.js', 'epd-sign.js', 'etrn.js', 'onboarding.js', 'driver.js');
-    else if (isA) files.push('qrcode.min.js', 'entry-share.js', 'print-window.js', 'order-documents.js', 'doc-templates.js', 'sign-operator-letters.js', 'operator-letters.js', 'admin-profile.js', 'admin-cabinet-settings.js', 'epd-sign.js', 'etrn.js', 'admin.js', 'admin-docs.js', 'admin-plans.js', 'onboarding.js');
-    else if (isZ) files.push('qrcode.min.js', 'customer-invoice.js', 'order-documents.js', 'doc-templates.js', 'epd-sign.js', 'etrn.js', 'customer.js', 'onboarding.js');
+    if (isV) {
+      files.push('space-modules.js', 'qrcode.min.js', 'entry-share.js', 'print-window.js', 'order-documents.js', 'doc-templates.js', 'epd-sign.js', 'etrn.js', 'onboarding.js', 'driver.js');
+      if (armadaOwnerDriverPreviewEnabled()) files.push('owner-driver.js');
+    } else if (isA) {
+      files.push('space-modules.js', 'qrcode.min.js', 'entry-share.js', 'print-window.js', 'order-documents.js', 'doc-templates.js', 'sign-operator-letters.js', 'operator-letters.js', 'admin-profile.js', 'admin-cabinet-settings.js', 'epd-sign.js', 'etrn.js', 'admin-entitlements.js', 'fleet-rates.js', 'fleet-rates-ui.js', 'auth.js', 'vehicle-catalog-ui.js', 'admin.js', 'admin-docs.js', 'admin-plans.js', 'onboarding.js');
+    }
+    else if (isZ) files.push('qrcode.min.js', 'customer-invoice.js', 'order-documents.js', 'doc-templates.js', 'epd-sign.js', 'etrn.js', 'fleet-rates.js', 'fleet-rates-ui.js', 'customer.js', 'onboarding.js');
     else {
       files.push(
         'qrcode.min.js',
@@ -68,6 +93,10 @@
         'epd-sign.js',
         'driver.js',
         'etrn.js',
+        'fleet-rates.js',
+        'fleet-rates-ui.js',
+        'auth.js',
+        'vehicle-catalog-ui.js',
         'admin.js',
         'admin-docs.js',
         'admin-plans.js',
@@ -75,13 +104,13 @@
         'onboarding.js'
       );
     }
-    files.push('app.js');
+    files.push('vehicle-podbor.js', 'app.js');
     if (!globalThis.ARMADA_APP_BUILD) files.unshift('armada-build.js');
     return files;
   }
 
   function inviteScripts() {
-    var inv = ['store.js', 'billing.js', 'app.js', 'driver.js', 'invite.js'];
+    var inv = ['store.js', 'billing.js', 'vehicle-podbor.js', 'app.js', 'driver.js', 'invite.js'];
     if (!globalThis.ARMADA_APP_BUILD) inv.unshift('armada-build.js');
     return inv;
   }

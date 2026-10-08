@@ -89,7 +89,7 @@
       <h2>Вход водителя</h2>
       <div class="sub">Сначала телефон — затем PIN</div>
       <label for="drv-login-phone">Телефон</label>
-      <input id="drv-login-phone" inputmode="tel" placeholder="+79650730002" autocomplete="tel" />
+      <input id="drv-login-phone" inputmode="tel" placeholder="+79990000000" autocomplete="tel" />
       <div id="driver-pick-panel" style="display:none">
         <p class="hint">Несколько профилей на этот телефон — выберите фирму</p>
         <div id="driver-pick-list"></div>
@@ -131,7 +131,7 @@
       <label for="cust-login-phone">Телефон</label>
       <input id="cust-login-phone" inputmode="tel" placeholder="+7…" autocomplete="tel" />
       <label for="cust-login-pin">PIN</label>
-      <input id="cust-login-pin" inputmode="numeric" maxlength="8" placeholder="••••" autocomplete="current-password" />
+      <input id="cust-login-pin" type="password" inputmode="numeric" maxlength="8" placeholder="••••" autocomplete="current-password" />
       <div class="error" id="cust-login-error"></div>
       <button class="primary" id="cust-login-ok">Войти</button>
       <div class="hint">Перевозчик включает портал в «Справочники → компания → Заказчик».</div>
@@ -257,6 +257,13 @@
                   <div class="cust-time-field">
                     <label for="cust-vehicle-time">Время</label>
                     <input id="cust-vehicle-time" lang="ru" placeholder="09:00" inputmode="numeric" maxlength="5" autocomplete="off" value="09:00" />
+                    <label for="cust-when-needed" style="margin-top:8px;display:block">Когда нужно</label>
+                    <select id="cust-when-needed">
+                      <option value="flexible">Гибко — согласуем дату</option>
+                      <option value="specific" selected>Конкретная дата и время</option>
+                      <option value="within_2h">В течение 2 часов</option>
+                      <option value="now">Сейчас / срочно</option>
+                    </select>
                     <div class="cust-time-presets" role="group" aria-label="Быстрый выбор времени">
                       <button type="button" class="secondary cust-time-preset" data-hm="08:00">08:00</button>
                       <button type="button" class="secondary cust-time-preset" data-hm="09:00">09:00</button>
@@ -448,6 +455,7 @@
                   <p class="hint" id="cust-fleet-hint">Запрос брони подтвердит перевозчик. После подтверждения дата подачи появится в календаре у вас и у него.</p>
                 </div>
                 <div id="cust-price-preview" class="schedule-box"></div>
+                <div id="cust-quote-variants" class="schedule-box" style="margin-top:8px"></div>
                 <label for="cust-price">Ваша цена, ₽ (не ниже минимума, если он есть)</label>
                 <input id="cust-price" inputmode="decimal" placeholder="из расчёта или уточнит перевозчик" />
                 <div class="error" id="cust-form-error"></div>
@@ -572,6 +580,7 @@
           <button type="button" class="admin-nav-item" data-nav="social" id="admin-social" style="display:none">Соцсети</button>
           <button type="button" class="admin-nav-item" data-nav="activity" id="admin-activity" style="display:none">Активность</button>
           <button type="button" class="admin-nav-item" data-nav="billing" id="admin-billing" style="display:none">Тарифы</button>
+          <button type="button" class="admin-nav-item" data-nav="entitlements" id="admin-entitlements" style="display:none">Модули кабинетов</button>
           <button type="button" class="admin-nav-item" data-nav="plans" id="admin-plans" style="display:none">Планы</button>
         </nav>
         <div class="admin-sidebar-foot">
@@ -658,7 +667,7 @@
                 </div>
                 <div>
                   <label for="create-contact-phone">Телефон</label>
-                  <input id="create-contact-phone" inputmode="tel" placeholder="+79650730002" />
+                  <input id="create-contact-phone" inputmode="tel" placeholder="+79990000000" />
                 </div>
               </div>
             </div>
@@ -697,7 +706,7 @@
                 <div><input id="create-loading-contact-name" placeholder="ФИО" /></div>
                 <div>
                   <label for="create-loading-contact-phone">Телефон</label>
-                  <input id="create-loading-contact-phone" inputmode="tel" placeholder="+79650730002" />
+                  <input id="create-loading-contact-phone" inputmode="tel" placeholder="+79990000000" />
                 </div>
               </div>
               <label for="create-unload">Адрес выгрузки</label>
@@ -707,7 +716,7 @@
                 <div><input id="create-unloading-contact-name" placeholder="ФИО" /></div>
                 <div>
                   <label for="create-unloading-contact-phone">Телефон</label>
-                  <input id="create-unloading-contact-phone" inputmode="tel" placeholder="+79650730002" />
+                  <input id="create-unloading-contact-phone" inputmode="tel" placeholder="+79990000000" />
                 </div>
               </div>
               <p class="hint" id="create-route-km-hint">Укажите адреса — построим маршрут для расчёта км и стоимости.</p>
@@ -902,6 +911,16 @@
     </div>
   </div>
 
+  <div id="admin-entitlements-screen" class="screen">
+    <div class="admin-form-shell">
+      <header class="form-topbar">
+        <button type="button" class="form-back" id="entitlements-back">← Назад</button>
+        <h1>Модули кабинетов</h1>
+      </header>
+      <div class="admin-form-scroll" id="entitlements-form"></div>
+    </div>
+  </div>
+
   <div id="admin-links-screen" class="screen">
     <div class="admin-form-shell">
       <header class="form-topbar">
@@ -1030,8 +1049,8 @@
     </div>
   </div>
 </div>
-  <script src="/armada-build.js?v=2026-10-05-pr158-f1"></script>
+  <script src="/armada-build.js?v=2026-10-06-owner-drv-2"></script>
   <script src="/entry-route.js"></script>
-  <script src="/boot-loader.js?v=2026-10-05-pr158-f1"></script>
+  <script src="/boot-loader.js?v=2026-10-06-owner-drv-2"></script>
 </body>
 </html>

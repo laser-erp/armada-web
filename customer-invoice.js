@@ -273,25 +273,37 @@ function customerInvoiceDocBody(invoice){
     <p><strong>К оплате: ${amtLine}</strong></p>
     ${bankLines?`<p>${bankLines}</p>`:''}`;
 }
+function openCustomerInvoiceHtmlTab(html, title){
+  const w=window.open('', '_blank');
+  if(!w){
+    alert('Разрешите всплывающие окна в браузере, чтобы открыть счёт.');
+    return false;
+  }
+  try{
+    w.document.open();
+    w.document.write(html);
+    w.document.close();
+  }catch(err){
+    console.warn('openCustomerInvoice', err);
+    try{ w.close(); }catch(_){}
+    alert('Не удалось открыть счёт во вкладке');
+    return false;
+  }
+  try{ if(title) w.document.title=title; }catch(_){}
+  return true;
+}
 function openCustomerInvoice(invoiceId, orderId){
   let inv=invoiceId?findInvoiceById(invoiceId):null;
-  if(!inv&&orderId&&typeof ensureCustomerInvoiceForOrder==='function'){
-    inv=ensureCustomerInvoiceForOrder(orderId);
-    if(inv) invoiceId=inv.id;
-  }
-  if(!inv){ alert('Счёт не найден — обновите страницу или откройте из списка «Бух доки»'); return; }
+  if(!inv&&orderId) inv=findInvoiceByOrderId(orderId);
+  if(!inv){ alert('Счёт не найден — обновите страницу или нажмите «Обновить» в шапке портала'); return; }
+  if(!invoiceId) invoiceId=inv.id;
   const order=(state.orders||[]).find(o=>o.id===inv.orderId)||{};
   if(typeof invoiceReadyForCustomer==='function'&&!invoiceReadyForCustomer(order, inv)){
     alert('QR для оплаты появится после согласования цены.');
     return;
   }
-  const pack=customerInvoiceBlobUrl(invoiceId);
-  if(!pack){ alert('Не удалось сформировать счёт'); return; }
-  const w=window.open(pack.url, '_blank', 'noopener');
-  if(!w){
-    downloadCustomerInvoice(invoiceId);
-    URL.revokeObjectURL(pack.url);
-    return;
-  }
-  setTimeout(()=>URL.revokeObjectURL(pack.url), 60000);
+  const html=customerInvoiceHtml(inv);
+  if(!html){ alert('Не удалось сформировать счёт'); return; }
+  const title=`Счёт №${inv.number||invoiceId}`;
+  if(!openCustomerInvoiceHtmlTab(html, title)) downloadCustomerInvoice(invoiceId);
 }

@@ -1,100 +1,5 @@
 /* АРМАДА admin UI: login/chrome, vehicle card, boards/catalogs (phase2 chunk D) */
 const COLS=["Дата","Госномер","Водитель","Заказчик","Маршрут","За день","Нулевой","С грузом","До стоянки","Общий день","₽/л","₽/км нал","С НДС","Без НДС","Нал","Доплата ЗП","ГСМ л","₽/км без НДС","ГСМ ₽","Аренда","Подушка","Прибыль","№ базы"];
-function normalizeLoginInn(raw){
-  return String(raw||'').replace(/\D/g,'');
-}
-function spaceIdsForLoginInn(innRaw){
-  const inn=normalizeLoginInn(innRaw);
-  if(!inn) return new Set();
-  const ids=new Set();
-  (state.spaces||[]).forEach(s=>{
-    if(normalizeLoginInn(s.inn)===inn) ids.add(s.id);
-  });
-  (state.companies||[]).forEach(c=>{
-    if(!companyHasRole(c,'own')) return;
-    if(normalizeLoginInn(c.inn)===inn && c.spaceId) ids.add(c.spaceId);
-  });
-  return ids;
-}
-function findAdminByInnAndPin(innRaw, pin){
-  const pinStr=String(pin||'').trim();
-  if(!pinStr) return null;
-  const inn=normalizeLoginInn(innRaw);
-  if(!inn) return null;
-  const spaceIds=spaceIdsForLoginInn(inn);
-  if(!spaceIds.size){
-    // Пустая база / sync не подтянул фирмы — единственный супер с этим PIN
-    const supers=(state.admins||[]).filter(a=>a.isSuper && String(a.pin||'').trim()===pinStr);
-    if(supers.length===1) return supers[0];
-    return null;
-  }
-  const matches=(state.admins||[]).filter(a=>{
-    // Супер-админ с loginBy=phone всё равно может войти по ИНН организации
-    if(a.loginBy==='phone' && !a.isSuper) return false;
-    if(String(a.pin||'').trim()!==pinStr) return false;
-    return !!(a.spaceId && spaceIds.has(a.spaceId));
-  });
-  if(matches.length===1) return matches[0];
-  // Супер без spaceId — вход по ИНН любой нашей фирмы (единственный супер с этим PIN)
-  const loose=(state.admins||[]).filter(a=>a.isSuper && String(a.pin||'').trim()===pinStr);
-  if(loose.length===1) return loose[0];
-  return null;
-}
-function adminLoginPhone(a){
-  if(!a) return '';
-  const own=typeof formatPhone==='function'?formatPhone(a.phone||''):String(a.phone||'').trim();
-  if(own) return own;
-  const drv=(state.drivers||[]).find(d=>samePersonName(d.name,a.name));
-  return typeof formatPhone==='function'?formatPhone(drv&&drv.phone||''):String(drv&&drv.phone||'').trim();
-}
-function looksLikeAdminPhoneInput(raw){
-  const s=String(raw||'').trim();
-  if(!s) return false;
-  if(s.startsWith('+')) return true;
-  const d=s.replace(/\D/g,'');
-  if(d.length===11 && d[0]==='7') return true;
-  if(d.length===10 && d[0]==='9') return true;
-  return false;
-}
-function findAdminByPhoneAndPin(phoneRaw, pin){
-  const pinStr=String(pin||'').trim();
-  if(!pinStr) return null;
-  const phone=typeof formatPhone==='function'?formatPhone(phoneRaw):String(phoneRaw||'').trim();
-  if(!phone) return null;
-  const matches=(state.admins||[]).filter(a=>{
-    if(a.loginBy!=='phone') return false;
-    if(String(a.pin||'').trim()!==pinStr) return false;
-    return adminLoginPhone(a)===phone;
-  });
-  return matches.length===1 ? matches[0] : null;
-}
-function findAdminByLoginAndPin(loginRaw, pin){
-  const raw=String(loginRaw||'').trim();
-  const pinStr=String(pin||'').trim();
-  if(!raw || !pinStr) return null;
-  if(looksLikeAdminPhoneInput(raw)){
-    const byPhone=findAdminByPhoneAndPin(raw, pin);
-    if(byPhone) return byPhone;
-    const phone=typeof formatPhone==='function'?formatPhone(raw):String(raw||'').trim();
-    const superByPhone=(state.admins||[]).filter(a=>{
-      if(!a.isSuper || String(a.pin||'').trim()!==pinStr) return false;
-      return adminLoginPhone(a)===phone;
-    });
-    if(superByPhone.length===1) return superByPhone[0];
-  }
-  const inn=normalizeLoginInn(raw);
-  if(inn && (inn.length===10 || inn.length===12)){
-    const byInn=findAdminByInnAndPin(inn, pin);
-    if(byInn) return byInn;
-    const spaceIds=spaceIdsForLoginInn(inn);
-    const superByInn=(state.admins||[]).filter(a=>{
-      if(!a.isSuper || String(a.pin||'').trim()!==pinStr) return false;
-      return !!(a.spaceId && spaceIds.has(a.spaceId));
-    });
-    if(superByInn.length===1) return superByInn[0];
-  }
-  return findAdminByPhoneAndPin(raw, pin);
-}
 function paintOwnerFiltersBox(box, onPick){
   if(!box) return;
   if(!isSuperAdmin()){
@@ -172,27 +77,6 @@ function paintCatalogOwnerFilters(){
   };
   paintOwnerFiltersBox($('cat-owner-filters'), onPick);
   paintOwnerFiltersBox($('cabinet-owner-filters'), onPick);
-}
-function fillAdminLoginSelect(){
-  migrateAdmins();
-  const sel=$('admin-name-select'); if(!sel) return;
-  const list=state.admins.slice().sort((a,b)=>String(a.name).localeCompare(String(b.name),'ru'));
-  if(!list.length){
-    sel.innerHTML='<option value="">— загрузка… —</option>';
-  } else {
-    sel.innerHTML=list.map(a=>`<option value="${esc(a.id)}">${esc(a.name)}</option>`).join('');
-  }
-  const hint=$('pin-recovery-hint');
-  if(hint){
-    const msg=state.settings&&state.settings.superPinRecoveryNotice;
-    if(msg){
-      hint.textContent=msg;
-      hint.style.display='block';
-    }else{
-      hint.textContent='';
-      hint.style.display='none';
-    }
-  }
 }
 function pushAdminLogin(action){
   if(!currentAdmin) return;
@@ -460,6 +344,7 @@ function setAdminNav(nav){
   if(nav==='social'){ openAdminSocial(); return; }
   if(nav==='activity'){ openAdminActivity(); return; }
   if(nav==='billing'){ openAdminBilling(); return; }
+  if(nav==='entitlements'){ openAdminEntitlements(); return; }
   if(nav==='plans'){ openAdminPlans(); return; }
   if(nav==='links'){ openAdminLinks(); return; }
   if(nav==='documents'){ openAdminDocuments(); return; }
@@ -480,11 +365,13 @@ function updateAdminChrome(){
   const conn=$('admin-connect-leads');
   const social=$('admin-social');
   const bill=$('admin-billing');
+  const ent=$('admin-entitlements');
   const plans=$('admin-plans');
   if(act) act.style.display=isSuperAdmin()?'':'none';
   if(conn) conn.style.display=isSuperAdmin()?'':'none';
   if(social) social.style.display=isSuperAdmin()?'':'none';
   if(bill) bill.style.display=isSuperAdmin()?'':'none';
+  if(ent) ent.style.display=isSuperAdmin()?'':'none';
   if(plans) plans.style.display=isSuperAdmin()?'':'none';
   if(typeof updateAdminConnectLeadsBadge==='function') updateAdminConnectLeadsBadge();
   const title=$('admin-title');
@@ -516,150 +403,6 @@ function updateAdminChrome(){
   syncAdminNav();
   paintAdminOwnerFilters();
   syncAdminProfileNavLabels();
-}
-function saveAdminSession(){
-  if(!currentAdmin){ try{ localStorage.removeItem(ADMIN_SESSION_KEY); }catch(_){} return; }
-  try{
-    localStorage.setItem(ADMIN_SESSION_KEY, JSON.stringify({
-      id:currentAdmin.id, name:currentAdmin.name, isSuper:!!currentAdmin.isSuper,
-      spaceId:currentAdmin.spaceId||null, at:new Date().toISOString()
-    }));
-  }catch(_){}
-}
-function clearAdminSession(){
-  try{ localStorage.removeItem(ADMIN_SESSION_KEY); }catch(_){}
-}
-function restoreAdminSession(){
-  migrateAdmins();
-  let raw=null;
-  try{ raw=JSON.parse(localStorage.getItem(ADMIN_SESSION_KEY)||'null'); }catch(_){ raw=null; }
-  if(!raw||(!raw.id && !raw.name)) return false;
-  let adm=(state.admins||[]).find(a=>raw.id && a.id===raw.id);
-  if(!adm && raw.name) adm=(state.admins||[]).find(a=>samePersonName(a.name, raw.name));
-  if(!adm){ clearAdminSession(); return false; }
-  currentAdmin={id:adm.id, name:adm.name, isSuper:!!adm.isSuper, spaceId:adm.spaceId||null};
-  saveAdminSession();
-  try{ touchAdminPresence('admin'); }catch(_){}
-  try{ startPresenceHeartbeat(); }catch(_){}
-  updateAdminChrome();
-  seedAdminInboxNotifySnapshot();
-  syncAdminNotifyToggle();
-  return true;
-}
-function bumpAdminLoginListRefreshGen(){
-  try{ globalThis.ARMADA_ADMIN_LIST_REFRESH_GEN=(globalThis.ARMADA_ADMIN_LIST_REFRESH_GEN||0)+1; }catch(_){}
-}
-async function loginAdmin(){
-  migrateAdmins();
-  bumpAdminLoginListRefreshGen();
-  const pinErr=$('pin-error');
-  if(pinErr) pinErr.textContent='';
-  const btn=$('pin-ok');
-  if(btn) btn.disabled=true;
-  try{
-  const loginRaw=(($('admin-login-inn')||{}).value||'').trim();
-  const pin=(($('pin-input')||{}).value||'').trim();
-  if(!loginRaw){
-    if(pinErr) pinErr.textContent='Укажите телефон или ИНН организации';
-    return;
-  }
-  const inn=normalizeLoginInn(loginRaw);
-  if(!looksLikeAdminPhoneInput(loginRaw) && inn && inn.length!==10 && inn.length!==12){
-    if(pinErr) pinErr.textContent='ИНН: 10 цифр для организации или 12 для ИП';
-    return;
-  }
-  let loginSyncOk=false;
-  try{
-    if(navigator.onLine!==false && typeof fetchServerState==='function'){
-      const rec=await fetchServerState(8000, { pin:'sync', meta: { role:'sync' } });
-      if(rec&&rec.payload){
-        loginSyncOk=true;
-        pbRecordId=rec.id;
-        if(typeof mergeLoginCatalogFromRemote==='function') mergeLoginCatalogFromRemote(rec.payload);
-        mergeAdminAuthFromRemote(rec.payload, {remoteWinsAuth:true});
-        migrateAdmins();
-        migrateSpaces();
-        migrateDriverPins();
-        persistLocalOnly();
-      }
-    }
-  }catch(_){}
-  let adm=null;
-  if(navigator.onLine!==false && typeof armadaApiVerifyAdmin==='function'){
-    const verified=await armadaApiVerifyAdmin(loginRaw, pin);
-    if(verified&&verified.admin){
-      adm=verified.admin;
-      const full=(state.admins||[]).find(a=>a.id===adm.id);
-      if(full) adm={...full, ...adm, pin:full.pin};
-      else adm={...adm, pin:''};
-    }
-  }
-  if(!adm) adm=findAdminByLoginAndPin(loginRaw, pin);
-  if(!adm){
-    if(pinErr){
-      if(!loginSyncOk && navigator.onLine!==false){
-        pinErr.textContent='Сессия с сервером устарела или сервер недоступен. Обновите страницу (Ctrl+F5) и войдите снова по телефону или ИНН и PIN';
-      }else if(looksLikeAdminPhoneInput(loginRaw)){
-        const phone=typeof formatPhone==='function'?formatPhone(loginRaw):String(loginRaw||'').trim();
-        const phoneKnown=(state.admins||[]).some(a=>adminLoginPhone(a)===phone);
-        pinErr.textContent=phoneKnown
-          ? 'Неверный PIN для этого телефона'
-          : 'Телефон не найден или неверный PIN. Вход по телефону включает супер-админ в «Активность».';
-      }else{
-        pinErr.textContent=spaceIdsForLoginInn(inn).size
-          ? 'Неверный PIN для этой организации'
-          : 'Организация с таким ИНН не найдена. Проверьте цифры или обратитесь к супер-админу';
-      }
-    }
-    return;
-  }
-  const localPin=String(adm.pin||'').trim();
-  if(localPin && pin!==localPin){
-    if(pinErr) pinErr.textContent='Неверный PIN. Если доступ только что восстановили — обновите страницу (Ctrl+F5)';
-    return;
-  }
-  if(adm.mustChangePin){
-    alert('Смените PIN: «Активность» → блок администраторов. Слабый или устаревший PIN из истории проекта.');
-  }
-  currentAdmin={id:adm.id, name:adm.name, isSuper:!!adm.isSuper, spaceId:adm.spaceId||null};
-  if(adm.isSuper&&adm.spaceId) state.adminOwnerFilter=adm.spaceId;
-  saveAdminSession();
-  markAdminPinOk();
-  pushAdminLogin('login');
-  touchAdminPresence('admin');
-  startPresenceHeartbeat();
-  armadaApiLogin('sync', {role:'sync'}).finally(()=>persist());
-  updateAdminChrome();
-  if(typeof clearEntrySkin==='function') clearEntrySkin();
-  if(typeof finishSplashOnce==='function') finishSplashOnce('admin');
-  else show('admin');
-  renderAdmin();
-  seedAdminInboxNotifySnapshot();
-  syncAdminNotifyToggle();
-  if(window.ArmadaOnboarding) ArmadaOnboarding.maybeAdmin();
-  if(typeof maybeOpenAdminProfileOnLogin==='function') maybeOpenAdminProfileOnLogin(adm);
-  }finally{
-    if(btn) btn.disabled=false;
-  }
-}
-async function logoutAdmin(){
-  if(typeof armadaConfirm==='function'){
-    const ok=await armadaConfirm({title:'Выйти из кабинета?', message:'', okLabel:'Выйти'});
-    if(!ok) return;
-  }
-  if(currentAdmin){
-    pushAdminLogin('logout');
-    clearMyPresence();
-    persist();
-  }
-  stopPresenceHeartbeat();
-  currentAdmin=null;
-  clearAdminSession();
-  clearAdminPinOk();
-  setArmadaApiToken('');
-  updateAdminChrome();
-  if(getEntryMode()==='admin') goEntryLanding('admin');
-  else show('roles');
 }
 function updateAdminConnectLeadsBadge(){
   const badge=$('admin-connect-leads-badge');
@@ -2246,7 +1989,10 @@ function openVehicleCard(vehicleId){
     <section class="form-section">
       <h2 class="form-section-title">Основные</h2>
       <div class="fin-grid">
-        <label>Модель<input id="vc-model" value="${esc(v.makeModel||'')}" placeholder="ГАЗ Валдай" /></label>
+        <label>Модель из справочника<select id="vc-catalog-model"><option value="">Загрузка…</option></select></label>
+        <label class="check"><input type="checkbox" id="vc-catalog-manual" ${v.catalogCorrectedByOwner||(v.crane&&v.crane.correctedByOwner)?'checked':''}/> Скорректировать вручную</label>
+        <button type="button" class="secondary" id="vc-catalog-reset" style="width:auto;padding:6px 12px">Сбросить к эталону</button>
+        <label>Модель (текст)<input id="vc-model" value="${esc(v.makeModel||'')}" placeholder="ГАЗ Валдай" /></label>
         <label class="required" for="vc-body-type">Тип кузова</label><select id="vc-body-type">${fleetBodyTypeOptionsHtml(v.bodyTypeId)}</select>
         <label class="required" for="vc-payload">Грузоподъёмность, т</label><input id="vc-payload" inputmode="decimal" value="${v.payloadTons??''}" placeholder="5" />
         <label class="required" for="vc-l">Длина кузова, м</label><input id="vc-l" inputmode="decimal" value="${v.bodyLengthM??''}" placeholder="6" />
@@ -2292,6 +2038,10 @@ function openVehicleCard(vehicleId){
   `;
   show('admin-vehicle-card');
   state._vehicleCardId=v.id;
+  const vcat=typeof window!=='undefined'?window.armadaVehicleCatalog:null;
+  if(vcat&&vcat.wireVehicleCatalogPicker) vcat.wireVehicleCatalogPicker(v, box);
+  const frUi=typeof window!=='undefined'?window.armadaFleetRatesUi:null;
+  if(frUi&&frUi.wireVehicleCard) frUi.wireVehicleCard(v, box);
   wireFleetTrailerToggles(box);
   $('vc-trailer')&&($('vc-trailer').onchange=()=>{
     const wrap=$('vc-trailer-plate-wrap');
@@ -2336,6 +2086,10 @@ function openVehicleCard(vehicleId){
   });
   $('vc-save-head').onclick=()=>{
     v.makeModel=(($('vc-model')||{}).value||'').trim();
+    const catSel=$('vc-catalog-model');
+    if(catSel&&catSel.value) v.modelId=catSel.value.trim();
+    v.catalogCorrectedByOwner=!!($('vc-catalog-manual')&&$('vc-catalog-manual').checked);
+    if(v.crane) v.crane.correctedByOwner=v.catalogCorrectedByOwner;
     v.bodyTypeId=(($('vc-body-type')||{}).value||'').trim()||null;
     v.payloadTons=numOrNull(($('vc-payload')||{}).value);
     v.bodyLengthM=numOrNull(($('vc-l')||{}).value);
@@ -2571,7 +2325,7 @@ function openDriverCard(driverKey){
     <section class="form-section">
       <h2 class="form-section-title">Основное</h2>
       <div class="fin-grid">
-        <label>Телефон<input id="dc-phone" type="tel" inputmode="tel" value="${esc(formatPhone(d.phone||''))}" placeholder="+79650730002" /></label>
+        <label>Телефон<input id="dc-phone" type="tel" inputmode="tel" value="${esc(formatPhone(d.phone||''))}" placeholder="+79990000000" /></label>
         <label>PIN<input id="dc-pin" inputmode="numeric" maxlength="8" value="${esc(d.pin||resolveDriverPin(d)||'')}" placeholder="PIN входа" /></label>
         <label>ЗП, %<input id="dc-pct" inputmode="decimal" value="${esc(d.salaryPercent??30)}" /></label>
         <label class="check svc-full" style="align-self:end;padding:8px 0"><input type="checkbox" id="dc-ex" ${d.exchangeEnabled?'checked':''}/> Биржа</label>
@@ -2878,18 +2632,32 @@ function adminFleetVehicleAssignHintsHtml(vehicles){
   }).filter(Boolean).join('');
   return lines?`<div class="veh-assign-hints">${lines}</div>`:'';
 }
+function adminConfirmVehicleFleetMismatch(plate, o, veh){
+  if(!veh||typeof vehicleFitsOrder!=='function'||vehicleFitsOrder(veh, o)) return true;
+  const req=typeof orderReqText==='function'?orderReqText(o):'';
+  if(typeof confirm!=='function') return false;
+  return confirm(`${plate} не полностью подходит под требования заявки №${o.sequentialNumber||'—'}${req?` (${req})`:''}.\n\nВсё равно назначить?`);
+}
 function adminFleetPlateOptionsForOrder(o, firmId, opts){
   opts=opts||{};
   const booked=String(opts.bookedPlate||'').trim();
   const currentPlate=String(opts.currentPlate||'').trim();
   const pickPlate=currentPlate||booked;
+  const showAll=!!opts.showAllMismatched;
   const all=firmId?fleetVehiclesForCompany(firmId):[];
-  const ok=all.filter(v=>vehicleFitsOrder(v,o));
-  let list=ok.length?ok:all;
+  const fitO=typeof orderForVehicleFitCheck==='function'?orderForVehicleFitCheck(o):o;
+  const ok=typeof fleetVehiclesMatchingOrder==='function'?fleetVehiclesMatchingOrder(all, fitO):all.filter(v=>vehicleFitsOrder(v, fitO));
+  let list=showAll?sortFleetVehiclesByClosestPayload(all):ok;
+  if(showAll&&ok.length){
+    const okSet=new Set(ok.map(v=>v.plate));
+    const rest=sortFleetVehiclesByClosestPayload(all.filter(v=>!okSet.has(v.plate)));
+    list=[...ok, ...rest];
+  }
   if(pickPlate){
     const pinned=all.find(v=>v.plate===pickPlate);
     if(pinned&&!list.some(v=>v.plate===pickPlate)) list=[pinned,...list];
   }
+  const weightUnknown=typeof orderVehicleWeightUnknown==='function'&&orderVehicleWeightUnknown(fitO);
   const incomplete=all.filter(v=>{
     const block=typeof vehicleMissingAssignBlockParams==='function'?vehicleMissingAssignBlockParams(v).length:0;
     const dim=typeof vehicleHasMissingDimensions==='function'&&vehicleHasMissingDimensions(v);
@@ -2906,17 +2674,19 @@ function adminFleetPlateOptionsForOrder(o, firmId, opts){
       const block=typeof vehicleAssignBlockHint==='function'?vehicleAssignBlockHint(v):('⚠ нет обязательных параметров: '+blockMiss.join(', '));
       return `<option value="${esc(v.plate)}" disabled title="${esc(block)}">${esc(v.plate)}${spec} · ${esc(block)}</option>`;
     }
-    const fits=vehicleFitsOrder(v,o);
+    const fits=vehicleFitsOrder(v, fitO);
     const warnBits=[];
     if(dimWarn) warnBits.push(dimWarn);
     if(!fits) warnBits.push('не по требованиям');
     const warn=warnBits.length?' · ⚠ '+esc(warnBits.join(' · ')):'';
     return `<option value="${esc(v.plate)}"${sel}${!fits?' data-fleet-mismatch="1"':''}>${esc(v.plate)}${spec}${bookTag}${warn}</option>`;
   }).join(''):'';
-  const emptyHint=all.length
-    ?(ok.length?'':`В парке ${all.length} авто — по фильтру 0, показаны все. Заполните тоннаж/тип кузова в справочнике или назначьте вручную.`)
-    :'В парке нет авто — Справочники → Авто (госномер, тоннаж, тип кузова).';
-  return {allCount:all.length, okCount:ok.length, html, emptyHint, hintHtml};
+  let emptyHint='';
+  if(!all.length) emptyHint='В парке нет авто — Справочники → Авто (госномер, тоннаж, тип кузова).';
+  else if(!ok.length&&!showAll) emptyHint='Нет подходящих машин по тоннажу и параметрам';
+  else if(weightUnknown) emptyHint='Вес не указан — подбор по тоннажу не применяется';
+  const canShowAll=!!(all.length&&!showAll);
+  return {allCount:all.length, okCount:ok.length, html, emptyHint, hintHtml, canShowAll, weightUnknown};
 }
 function adminOrdersBulkBarHtml(){
   const n=adminOrderPickCount();
@@ -2977,13 +2747,8 @@ function applyOwnFleetAssignment(o, driver, plate, firmId, opts){
   }
   if(!vehicleFitsOrder(veh, o)){
     const soft=opts&&opts.allowMismatch;
-    if(!soft && typeof confirm==='function'){
-      const req=typeof orderReqText==='function'?orderReqText(o):'';
-      if(!confirm(`${plate} не полностью подходит под требования заявки №${o.sequentialNumber}${req?` (${req})`:''}.\n\nВсё равно назначить?`)){
-        return {ok:false, message:'Назначение отменено'};
-      }
-    }else if(!soft){
-      return {ok:false, message:`${plate} не подходит по т/габаритам для №${o.sequentialNumber}`};
+    if(!soft&&!adminConfirmVehicleFleetMismatch(plate, o, veh)){
+      return {ok:false, message:'Назначение отменено'};
     }
   }
   const drvRec=findDriverRecord(driver, firmId);
@@ -3702,6 +3467,24 @@ function confirmClaimExchangeAfterGuard(o){
   if(!vehicleFitsOrder(veh, o)){ $('claim-error').textContent='Авто не подходит по требованиям заявки'; return; }
   const drvRec=findDriverRecord(driver, myCo.id);
   if(typeof confirmIfDriverDocsIncomplete==='function'&&!confirmIfDriverDocsIncomplete(drvRec, driver)) return;
+  const fr=typeof window!=='undefined'?window.armadaFleetRates:null;
+  if(fr&&fr.checkExchangeConflict){
+    const conflict=fr.checkExchangeConflict(veh, o);
+    if(conflict.conflict&&fr.promptExchangeConflict){
+      const choice=fr.promptExchangeConflict(conflict, myCo);
+      if(choice.action==='abort') return;
+      if(choice.action==='cancel_signed'&&conflict.signed&&conflict.signed.length){
+        conflict.signed.forEach(signedOrder=>{
+          if(signedOrder.transportApp){
+            signedOrder.transportApp.cancelledAt=new Date().toISOString();
+            signedOrder.transportApp.cancellationPenalty=choice.penalty||null;
+          }
+          signedOrder.bookStatus='cancelled';
+          upsertOrder(signedOrder);
+        });
+      }
+    }
+  }
   const customerCo=findCompanyById(o.ownCompanyId);
   o.transportApp={
     id:uuid(),
@@ -4384,11 +4167,25 @@ function renderAdmin(){
   });
   wireAdminOrderListActions(filtOrders);
 }
+function createOrderFleetReqDraft(){
+  const reqs=typeof readOrderRequirementsFromCreate==='function'?readOrderRequirementsFromCreate():{};
+  const body=(($('create-body-type')||{}).value||'').trim();
+  if(body) reqs.reqBodyType=body;
+  const vtype=(($('create-vehicle-vtype')||{}).value||'').trim();
+  if(vtype) reqs.vehicleTypeIds=[vtype];
+  return typeof orderForVehicleFitCheck==='function'?orderForVehicleFitCheck(reqs):reqs;
+}
 function fillCreateFleetSelects(){
   const coId=(($('create-own-company')||{}).value)||'';
   const co=findCompanyById(coId);
   const firm=co?co.name:'фирмы';
-  const vehList=fleetVehiclesForCompany(coId);
+  let vehList=fleetVehiclesForCompany(coId);
+  const reqDraft=createOrderFleetReqDraft();
+  if(typeof orderHasVehicleRequirements==='function'&&orderHasVehicleRequirements(reqDraft)&&typeof fleetVehiclesMatchingOrder==='function'){
+    vehList=fleetVehiclesMatchingOrder(vehList, reqDraft);
+  }else if(typeof sortFleetVehiclesByClosestPayload==='function'){
+    vehList=sortFleetVehiclesByClosestPayload(vehList);
+  }
   const drvList=fleetDriversForCompany(coId);
   const plateEl=$('create-plate');
   const drvEl=$('create-driver');
@@ -4648,6 +4445,12 @@ async function openAdminCreateScreen(opts){
   if(typeof wireCreateAddressFields==='function') wireCreateAddressFields();
   if(typeof wireCreatePricePreview==='function') wireCreatePricePreview();
   if(typeof updateCreatePricePreview==='function') updateCreatePricePreview();
+  ['create-req-pay','create-req-l','create-req-w','create-req-h'].forEach(rid=>{
+    const el=$(rid);
+    if(!el||el.dataset.fleetReqHook) return;
+    el.dataset.fleetReqHook='1';
+    el.oninput=()=>fillCreateFleetSelects();
+  });
   show('admin-create');
   highlightDay();
   const createScroll=document.querySelector('#admin-create .admin-form-scroll');
@@ -5010,9 +4813,10 @@ function adminOrderDetailAssignSectionHtml(o){
   const platePack=typeof adminFleetPlateOptionsForOrder==='function'
     ?adminFleetPlateOptionsForOrder(o, firmId, {
       bookedPlate:String(o.bookedPlate||'').trim(),
-      currentPlate:String(curPlate||'').trim()
+      currentPlate:String(curPlate||'').trim(),
+      showAllMismatched:!!(state._detailShowAllPlates&&state._detailShowAllPlates===o.id)
     })
-    :{html:'', emptyHint:'', allCount:0, okCount:0, hintHtml:''};
+    :{html:'', emptyHint:'', allCount:0, okCount:0, hintHtml:'', canShowAll:false};
   const drvVal=curDrv==='Диспетчер'||curDrv==='Биржа'||curDrv==='—'?'':curDrv;
   const drvSelected=drvVal&&drvList.some(d=>samePersonName(d.name,drvVal));
   const drvField=drvList.length
@@ -5021,13 +4825,17 @@ function adminOrderDetailAssignSectionHtml(o){
   const plateField=platePack.html
     ?`<select id="d-vehicle-plate"><option value=""${!curPlate?' selected':''}>Выберите ТС</option>${platePack.html}</select>`
     :`<input id="d-vehicle-plate" value="${esc(curPlate)}" placeholder="Выберите ТС" list="d-vehicle-plate-list" autocomplete="off" /><datalist id="d-vehicle-plate-list"></datalist>`;
-  const plateHint=platePack.allCount&&platePack.okCount===0&&platePack.emptyHint
+  const plateHint=platePack.emptyHint
     ?`<p class="form-section-hint">${esc(platePack.emptyHint)}</p>`
-    :(!platePack.allCount?`<p class="form-section-hint">${esc(platePack.emptyHint||'В парке нет авто — Справочники → Авто.')}</p>`:'');
+    :'';
+  const showAllBtn=platePack.canShowAll
+    ?`<p class="form-section-hint"><button type="button" class="secondary" id="d-vehicle-show-all">Показать все с ⚠</button></p>`
+    :'';
   return `<section class="form-section admin-order-assign">
     <h2 class="form-section-title">Назначение парка</h2>
     <p class="form-section-hint">Выберите водителя и авто — номер появится в карточке и у водителя в «Мои заявки».</p>
     ${plateHint}
+    ${showAllBtn}
     ${platePack.hintHtml||''}
     <div class="form-fields">
       <div class="form-pair">
@@ -5035,7 +4843,7 @@ function adminOrderDetailAssignSectionHtml(o){
         <div><label for="d-vehicle-plate">Авто · госномер</label>${plateField}</div>
       </div>
       <div class="form-pair">
-        <div><label for="d-driver-phone">Телефон</label><input id="d-driver-phone" inputmode="tel" value="${esc(orderDriverPhone(o))}" placeholder="+79650730002" /></div>
+        <div><label for="d-driver-phone">Телефон</label><input id="d-driver-phone" inputmode="tel" value="${esc(orderDriverPhone(o))}" placeholder="+79990000000" /></div>
         <div class="admin-order-assign-actions"><button type="button" class="primary" id="detail-assign-apply">Сохранить назначение</button></div>
       </div>
       <div id="d-driver-docs-warn" hidden></div>
@@ -5182,7 +4990,7 @@ function openDetail(id){
         <div class="form-pair">
           <div>
             <label for="d-driver-phone">Телефон</label>
-            <input id="d-driver-phone" inputmode="tel" value="${esc(orderDriverPhone(o))}" placeholder="+79650730002" />
+            <input id="d-driver-phone" inputmode="tel" value="${esc(orderDriverPhone(o))}" placeholder="+79990000000" />
           </div>
         </div>
         <div id="d-driver-docs-warn" hidden></div>`;
@@ -5230,7 +5038,7 @@ function openDetail(id){
           </div>
           <div>
             <label for="d-contact-phone">Телефон контакта</label>
-            <input id="d-contact-phone" inputmode="tel" value="${esc(formatPhone(o.contactPhone||''))}" placeholder="+79650730002" />
+            <input id="d-contact-phone" inputmode="tel" value="${esc(formatPhone(o.contactPhone||''))}" placeholder="+79990000000" />
           </div>
         </div>
         <label for="d-carrier-company">Перевозчик</label>
@@ -5330,13 +5138,13 @@ function openDetail(id){
             <label for="d-loading-contact-name">Контакт на загрузке</label>
             <input id="d-loading-contact-name" value="${esc(o.loadingContactName||'')}" placeholder="ФИО" />
             <label for="d-loading-contact-phone">Телефон на загрузке</label>
-            <input id="d-loading-contact-phone" inputmode="tel" value="${esc(formatPhone(o.loadingContactPhone||''))}" placeholder="+79650730002" />
+            <input id="d-loading-contact-phone" inputmode="tel" value="${esc(formatPhone(o.loadingContactPhone||''))}" placeholder="+79990000000" />
           </div>
           <div>
             <label for="d-unloading-contact-name">Контакт на выгрузке</label>
             <input id="d-unloading-contact-name" value="${esc(o.unloadingContactName||'')}" placeholder="ФИО" />
             <label for="d-unloading-contact-phone">Телефон на выгрузке</label>
-            <input id="d-unloading-contact-phone" inputmode="tel" value="${esc(formatPhone(o.unloadingContactPhone||''))}" placeholder="+79650730002" />
+            <input id="d-unloading-contact-phone" inputmode="tel" value="${esc(formatPhone(o.unloadingContactPhone||''))}" placeholder="+79990000000" />
           </div>
         </div>
         <label class="cust-check-item">
@@ -5352,7 +5160,7 @@ function openDetail(id){
             </div>
             <div>
               <label for="d-shipper-phone">Телефон</label>
-              <input id="d-shipper-phone" inputmode="tel" value="${esc(formatPhone(o.shipperPhone||''))}" placeholder="+79650730002" />
+              <input id="d-shipper-phone" inputmode="tel" value="${esc(formatPhone(o.shipperPhone||''))}" placeholder="+79990000000" />
             </div>
           </div>
           <label for="d-shipper-inn">ИНН грузоотправителя</label>
@@ -5365,7 +5173,7 @@ function openDetail(id){
           </div>
           <div>
             <label for="d-consignee-phone">Телефон</label>
-            <input id="d-consignee-phone" inputmode="tel" value="${esc(formatPhone(o.consigneePhone||''))}" placeholder="+79650730002" />
+            <input id="d-consignee-phone" inputmode="tel" value="${esc(formatPhone(o.consigneePhone||''))}" placeholder="+79990000000" />
           </div>
         </div>
         <label for="d-consignee-inn">ИНН грузополучателя</label>
@@ -5621,6 +5429,13 @@ function openDetail(id){
     if(rec&&rec.phone&&$('d-driver-phone')) $('d-driver-phone').value=formatPhone(rec.phone);
   };
   $('d-driver-name')&&($('d-driver-name').onchange=()=>{ refreshDetailDrvWarn(); fillDetailDriverPhone(); });
+  const showAllPlatesBtn=$('d-vehicle-show-all');
+  if(showAllPlatesBtn){
+    showAllPlatesBtn.onclick=()=>{
+      state._detailShowAllPlates=id;
+      openDetail(id);
+    };
+  }
   $('d-customer-inn-lookup')&&($('d-customer-inn-lookup').onclick=()=>{
     applyCustomerFromInn((($('d-customer-inn')||{}).value||'').trim(), $('d-customer-inn-status'), 'd');
   });
@@ -5683,14 +5498,7 @@ function openDetail(id){
     if(order.priceForCarrier!=null&&order.priceForCarrier<=0) order.priceForCarrier=null;
     const drvName=(($('d-driver-name')||{}).value||'').trim();
     const plate=(($('d-vehicle-plate')||{}).value||'').trim();
-    if(drvName) order.driverName=drvName;
-    if(plate) order.vehiclePlate=plate;
     order.driverPhone=formatPhone((($('d-driver-phone')||{}).value||'').trim());
-    if(order.driverPhone && order.driverName){
-      const firmId=order.executorType==='partner'?(order.carrierCompanyId||order.ownCompanyId):order.ownCompanyId;
-      const rec=findDriverRecord(order.driverName, firmId);
-      if(rec) rec.phone=order.driverPhone;
-    }
     const ownSel=findCompanyById((($('d-own-company')||{}).value)||'');
     if(ownSel){ order.ownCompanyId=ownSel.id; order.ownCompanyName=ownSel.name; }
     order.reqPayloadTons=numOrNull(($('d-req-pay')||{}).value);
@@ -5706,6 +5514,29 @@ function openDetail(id){
     order.cargoPlaces=numOrNull(($('d-cargo-places')||{}).value);
     order.cargoVolumeM3=numOrNull(($('d-cargo-volume')||{}).value);
     order.cargoWeightKg=numOrNull(($('d-cargo-weight')||{}).value);
+    if(plate&&plate!=='—'&&drvName&&(typeof adminOrderUsesMyFleet!=='function'||adminOrderUsesMyFleet(order))){
+      const fleetId=typeof adminDetailFleetId==='function'?adminDetailFleetId(order):order.ownCompanyId;
+      const veh=fleetId?fleetVehiclesForCompany(fleetId).find(v=>v.plate===plate):null;
+      if(veh){
+        const miss=typeof vehicleMissingAssignBlockParams==='function'?vehicleMissingAssignBlockParams(veh):[];
+        if(miss.length){
+          const hint=typeof vehicleAssignBlockHint==='function'?vehicleAssignBlockHint(veh):vehicleRequiredParamsMessage(miss);
+          showErr(`${plate} — ${hint}`);
+          return;
+        }
+        if(!adminConfirmVehicleFleetMismatch(plate, order, veh)){
+          showErr('Назначение отменено');
+          return;
+        }
+      }
+    }
+    if(drvName) order.driverName=drvName;
+    if(plate) order.vehiclePlate=plate;
+    if(order.driverPhone && order.driverName){
+      const firmId=order.executorType==='partner'?(order.carrierCompanyId||order.ownCompanyId):order.ownCompanyId;
+      const rec=findDriverRecord(order.driverName, firmId);
+      if(rec) rec.phone=order.driverPhone;
+    }
     order.tripMode=(($('d-trip-mode')||{}).value||'')==='intercity'?'intercity':'city';
     order.routeKm=numOrNull(($('d-route-km')||{}).value);
     if(order.priceForClient!=null) order.pricePending=false;
@@ -6457,7 +6288,7 @@ function openCatalogs(){
         <div class="row">
           <input id="own-drv-name" placeholder="ФИО" style="flex:1.2" />
           <input class="pct" id="own-drv-pct" inputmode="decimal" value="30" placeholder="%" title="%" />
-          <input id="own-drv-phone" inputmode="tel" placeholder="+79650730002" style="flex:1" />
+          <input id="own-drv-phone" inputmode="tel" placeholder="+79990000000" style="flex:1" />
           <input id="own-drv-pin" inputmode="numeric" maxlength="8" placeholder="PIN" title="PIN" style="flex:0 0 52px;text-align:center" />
           <label class="check" title="Биржа"><input type="checkbox" id="own-drv-ex"/> Б</label>
           <button type="button" class="icon-btn ok" id="own-drv-add" title="Добавить">+</button>
@@ -6479,8 +6310,18 @@ function openCatalogs(){
         const dimBtn=`<button type="button" class="secondary${state.catalogVehiclesDimOnly?' on':''}" id="veh-dim-filter" style="width:auto;padding:6px 12px;margin:6px 0" title="Только машины без длины/ширины/высоты кузова в справочнике">Без габаритов${vehDimMissingCount?` (${vehDimMissingCount})`:''}</button>`;
         return `${firmPick}<p class="cat-panel-hint">${hint}</p>${dimBtn}`;
       })()}
-      <div class="cat-quick">
-        <div class="row">
+      <div class="cat-quick" id="own-veh-add-box">
+        <label class="svc-full" for="own-veh-model-search">Марка и модель из справочника</label>
+        <input id="own-veh-model-search" class="svc-full" list="own-veh-model-list" placeholder="Начните вводить марку или модель…" autocomplete="off" />
+        <datalist id="own-veh-model-list"></datalist>
+        <input type="hidden" id="own-veh-model-code" />
+        <p class="hint" id="own-veh-model-hint">Выберите модель из справочника или добавьте свою (staging)</p>
+        <div class="row" style="margin-top:4px;flex-wrap:wrap;gap:6px">
+          <button type="button" class="secondary" id="own-veh-manual-toggle" style="width:auto;padding:6px 10px">Скорректировать вручную</button>
+          <button type="button" class="secondary" id="own-veh-catalog-reset" style="width:auto;padding:6px 10px" hidden>Сбросить к эталону</button>
+          <button type="button" class="secondary" id="own-veh-custom-model" style="width:auto;padding:6px 10px">Добавить свою модель</button>
+        </div>
+        <div class="row" style="margin-top:8px">
           <label class="required svc-full" for="own-veh-plate">Госномер</label>
           <input id="own-veh-plate" placeholder="А123BC77" style="flex:1.5" />
           <label class="veh-spec-label" for="own-veh-cons">л/100</label>
@@ -6488,22 +6329,22 @@ function openCatalogs(){
           <button type="button" class="icon-btn ok" id="own-veh-add" title="Добавить">+</button>
         </div>
         <div class="row" style="margin-top:4px">
-          <label class="required" for="own-veh-body">Тип кузова</label>
-          <select id="own-veh-body" style="flex:1.2" title="Тип кузова">${fleetBodyTypeOptionsHtml('')}</select>
-          <label class="required" for="own-veh-pay">т</label>
-          <input id="own-veh-pay" inputmode="decimal" placeholder="т" title="Грузоподъёмность" style="flex:0 0 56px;text-align:center" />
+          <label class="required" for="own-veh-body">Тип кузова <span class="catalog-ref-mark" title="Эталон из справочника" hidden>◎</span></label>
+          <select id="own-veh-body" style="flex:1.2" title="Тип кузова" disabled class="veh-add-locked">${fleetBodyTypeOptionsHtml('')}</select>
+          <label class="required" for="own-veh-pay">т <span class="catalog-ref-mark" title="Эталон из справочника" hidden>◎</span></label>
+          <input id="own-veh-pay" inputmode="decimal" placeholder="Выберите модель" title="Грузоподъёмность" style="flex:0 0 56px;text-align:center" disabled class="veh-add-locked" />
           <label class="check" title="С прицепом"><input type="checkbox" id="own-veh-trailer" data-veh-trailer-toggle="own-add"/> Прицеп</label>
         </div>
         <div class="row" style="margin-top:4px" data-veh-trailer-plate-wrap="own-add" hidden>
           <input id="own-veh-trailer-plate" placeholder="Госномер прицепа" style="flex:1" />
         </div>
         <div class="row" style="margin-top:4px">
-          <label class="required" for="own-veh-l">Д, м</label>
-          <input id="own-veh-l" inputmode="decimal" placeholder="Д, м" style="flex:1;text-align:center" />
-          <label class="required" for="own-veh-w">Ш, м</label>
-          <input id="own-veh-w" inputmode="decimal" placeholder="Ш, м" style="flex:1;text-align:center" />
-          <label class="required" for="own-veh-h">В, м</label>
-          <input id="own-veh-h" inputmode="decimal" placeholder="В, м" style="flex:1;text-align:center" />
+          <label class="required" for="own-veh-l">Д, м <span class="catalog-ref-mark" title="Эталон из справочника" hidden>◎</span></label>
+          <input id="own-veh-l" inputmode="decimal" placeholder="Выберите модель" style="flex:1;text-align:center" disabled class="veh-add-locked" />
+          <label class="required" for="own-veh-w">Ш, м <span class="catalog-ref-mark" title="Эталон из справочника" hidden>◎</span></label>
+          <input id="own-veh-w" inputmode="decimal" placeholder="Выберите модель" style="flex:1;text-align:center" disabled class="veh-add-locked" />
+          <label class="required" for="own-veh-h">В, м <span class="catalog-ref-mark" title="Эталон из справочника" hidden>◎</span></label>
+          <input id="own-veh-h" inputmode="decimal" placeholder="Выберите модель" style="flex:1;text-align:center" disabled class="veh-add-locked" />
         </div>
       </div>
       <div class="cat-list">${vehicleCards}</div>
@@ -6711,7 +6552,7 @@ function openCatalogs(){
         <div class="card" style="margin:6px 0">
           <input data-cn="${i}" placeholder="ФИО" value="${esc(p.name)}" />
           <input data-ct="${i}" placeholder="Должность" value="${esc(p.title||'')}" />
-          <input data-cp="${i}" inputmode="tel" placeholder="+79650730002" value="${esc(contactPhone(p))}" />
+          <input data-cp="${i}" inputmode="tel" placeholder="+79990000000" value="${esc(contactPhone(p))}" />
           <label class="check"><input type="checkbox" data-cprim="${i}" ${p.isPrimary?'checked':''}/> Основной</label>
           <button type="button" class="secondary" data-cdel="${i}">Удалить контакт</button>
         </div>`).join('')||`<div class="hint">Нет контактов</div>`;
@@ -6728,7 +6569,7 @@ function openCatalogs(){
             <div style="flex:1;font-weight:700;font-size:.85rem">${esc(d.name)}</div>
             ${ph?`<a href="tel:${esc(ph)}" style="color:var(--accent);font-size:.8rem;white-space:nowrap">☎</a>`:''}
           </div>
-          <input data-own-dp="${idx}" inputmode="tel" placeholder="+79650730002" value="${esc(ph)}" />
+          <input data-own-dp="${idx}" inputmode="tel" placeholder="+79990000000" value="${esc(ph)}" />
         </div>`;
       }).join(''):`<div class="hint">Нет водителей в парке — добавьте во вкладке «Водители»</div>`;
     };
@@ -6779,12 +6620,15 @@ function openCatalogs(){
       $('co-drivers').innerHTML=drivers.map((d,i)=>`
         <div class="card" style="margin:6px 0">
           <input data-dn="${i}" placeholder="ФИО водителя" value="${esc(d.name)}" />
-          <input data-dp="${i}" inputmode="tel" placeholder="+79650730002" value="${esc(formatPhone(d.phone||''))}" />
+          <input data-dp="${i}" inputmode="tel" placeholder="+79990000000" value="${esc(formatPhone(d.phone||''))}" />
           <button type="button" class="secondary" data-ddel="${i}">Удалить</button>
         </div>`).join('')||`<div class="hint">Нет водителей</div>`;
       document.querySelectorAll('[data-ddel]').forEach(b=>b.onclick=()=>{ drivers.splice(+b.dataset.ddel,1); paintDrivers(); });
     };
     paintContacts(); paintOwnDrivers(); paintOwnVehicles(); paintVehicles(); paintDrivers();
+    if((isOwn||isCarr)&&typeof window!=='undefined'&&window.armadaFleetRatesUi&&window.armadaFleetRatesUi.wireCompanyPolicies){
+      window.armadaFleetRatesUi.wireCompanyPolicies(c, box);
+    }
     if(isCust&&typeof wireFrameworkContractPanel==='function') wireFrameworkContractPanel(c, box);
     const syncRoleVisibility=()=>{
       $('co-customer-fields').style.display=$('co-role-c').checked?'block':'none';
@@ -6994,6 +6838,11 @@ function openCatalogs(){
     bumpDataEpoch('del-vehicle');
     persist(); openCatalogs();
   });
+  const ownVehBox=$('own-veh-add-box');
+  const vcatAdd=typeof window!=='undefined'?window.armadaVehicleCatalog:null;
+  if(ownVehBox&&vcatAdd&&vcatAdd.wireOwnVehicleAddForm){
+    vcatAdd.wireOwnVehicleAddForm(ownVehBox).catch(err=>console.warn('own-veh-catalog', err));
+  }
   $('own-veh-add')&&($('own-veh-add').onclick=async ()=>{
     if(!currentAdmin){ alert('Войдите как администратор'); return; }
     const g=await billingGuardCurrentAdminWithServer('add_vehicle');
@@ -7015,7 +6864,20 @@ function openCatalogs(){
     const bodyLengthM=numOrNull(($('own-veh-l')||{}).value);
     const bodyWidthM=numOrNull(($('own-veh-w')||{}).value);
     const bodyHeightM=numOrNull(($('own-veh-h')||{}).value);
-    const draft={plate, consumptionPer100Km:cons, payloadTons, bodyTypeId, hasTrailer:trailer.hasTrailer, trailerPlate:trailer.trailerPlate, bodyLengthM, bodyWidthM, bodyHeightM, makeModel:''};
+    const modelCode=(($('own-veh-model-code')||{}).value||'').trim();
+    let draft={plate, consumptionPer100Km:cons, payloadTons, bodyTypeId, hasTrailer:trailer.hasTrailer, trailerPlate:trailer.trailerPlate, bodyLengthM, bodyWidthM, bodyHeightM, makeModel:''};
+    const catalogDraft=ownVehBox&&ownVehBox._ownVehCatalogDraft?ownVehBox._ownVehCatalogDraft():null;
+    if(catalogDraft&&catalogDraft.buildVehicle) draft=catalogDraft.buildVehicle(draft);
+    else if(modelCode) draft.modelId=modelCode;
+    const hasCatalog=modelCode||draft.modelId;
+    const manualOk=catalogDraft&&(catalogDraft.manual||catalogDraft.customMode);
+    if(!hasCatalog&&!manualOk){
+      const filled=bodyTypeId&&payloadTons&&bodyLengthM&&bodyWidthM&&bodyHeightM;
+      if(!filled){
+        alert('Выберите модель из справочника или включите ручной ввод / свою модель');
+        return;
+      }
+    }
     if(!assertFleetVehicleRequired(draft, fleetVehicleFieldIdsAdd(), $('catalogs-form'))) return;
     if(!validateFleetTrailer(trailer)) return;
     state.vehicles.push(normalizeFleetVehicle(Object.assign({}, draft, {

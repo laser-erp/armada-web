@@ -186,7 +186,7 @@ function dayKeyFromIso(iso){
   if(Number.isNaN(d.getTime())) return '';
   return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
 }
-const APP_BUILD=(typeof globalThis!=='undefined'&&globalThis.ARMADA_APP_BUILD)||'2026-10-05-pr158-f1';
+const APP_BUILD=(typeof globalThis!=='undefined'&&globalThis.ARMADA_APP_BUILD)||'2026-10-06-owner-drv-2';
 /** Корпоративная почта @armada.sx (biz.mail.ru; алиасы → info@armada.sx). */
 const ARMADA_MAIL={
   info:'info@armada.sx',
@@ -1167,7 +1167,7 @@ function normalizeFleetVehicle(v){
   if(!v) return null;
   const plate=String(v.plate||'').trim();
   if(!plate) return null;
-  return {
+  const out={
     id:v.id||uuid(),
     plate,
     consumptionPer100Km:(+v.consumptionPer100Km>0)?+v.consumptionPer100Km:20,
@@ -1191,6 +1191,20 @@ function normalizeFleetVehicle(v){
     serviceIntervals:Array.isArray(v.serviceIntervals)?v.serviceIntervals:[],
     maintenanceLogs:Array.isArray(v.maintenanceLogs)?v.maintenanceLogs:[]
   };
+  if(v.modelId) out.modelId=String(v.modelId).trim();
+  if(v.catalogType) out.catalogType=String(v.catalogType).trim();
+  if(v.catalogCorrectedByOwner) out.catalogCorrectedByOwner=true;
+  if(v.catalogBenchmark&&typeof v.catalogBenchmark==='object') out.catalogBenchmark=v.catalogBenchmark;
+  if(v.axles!=null&&+v.axles>0) out.axles=+v.axles;
+  if(v.enginePower!=null&&+v.enginePower>0) out.enginePower=+v.enginePower;
+  if(v.crane&&typeof v.crane==='object') out.crane=v.crane;
+  if(v.rates&&typeof v.rates==='object') out.rates=v.rates;
+  if(v.schedule&&typeof v.schedule==='object') out.schedule=v.schedule;
+  if(v.location&&typeof v.location==='object') out.location=v.location;
+  if(v.rating&&typeof v.rating==='object') out.rating=v.rating;
+  const fr=typeof globalThis!=='undefined'?globalThis.armadaFleetRates:null;
+  if(fr&&fr.normalizeVehicleFleetMeta) fr.normalizeVehicleFleetMeta(out);
+  return out;
 }
 function normalizeAllPhones(){
   let changed=false;
@@ -1823,11 +1837,15 @@ function unionDeletedOrderIds(extra){
   (extra||[]).forEach(id=>{ if(id && !list.includes(id)) list.push(id); });
   return list;
 }
-function stripCancelledFromOrders(orders){
+/** Убрать из списка только tombstone (deletedOrderIds + RETIRED), не отменённые по cancelledAt. */
+function stripTombstonedOrders(orders){
   const dead=deletedOrderIdSet();
-  return (orders||[]).filter(o=>o && !isCancelledOrder(o) && !dead.has(o.id));
+  return (orders||[]).filter(o=>o && !dead.has(o.id));
 }
-/** Вычистить retired/отменённые из orders и смен (чтобы дубль не висел на сервере). */
+function stripCancelledFromOrders(orders){
+  return stripTombstonedOrders(orders);
+}
+/** Вычистить tombstone-дубли из orders и смен (отменённые по статусу остаются). */
 function purgeDeadOrdersEverywhere(){
   unionDeletedOrderIds([]);
   const before=(state.orders||[]).length;
@@ -1837,26 +1855,24 @@ function purgeDeadOrdersEverywhere(){
   });
   return before!==(state.orders||[]).length;
 }
-/**
- * Сквозные № базы без дыр: 1…N по дате создания.
- * Иначе после удаления дубля следующий заказ получает max+1 (№5 при живых 1–3).
- */
-function compactSequentialNumbers(){
+function maxLiveOrderSequentialNumber(){
+  let max=0;
+  (state.orders||[]).forEach(o=>{
+    if(!o||o.sequentialNumber==null) return;
+    const n=Number(o.sequentialNumber);
+    if(n>max) max=n;
+  });
+  return max;
+}
+/** Не перенумеровывает заказы: state.seq = max(счётчик, max № в списке). */
+function syncSequentialCounter(){
   purgeDeadOrdersEverywhere();
-  const list=(state.orders||[]).slice().sort((a,b)=>{
-    const ta=new Date(a.createdAt||0).getTime();
-    const tb=new Date(b.createdAt||0).getTime();
-    if(ta!==tb) return ta-tb;
-    return String(a.id||'').localeCompare(String(b.id||''));
-  });
   let changed=false;
-  list.forEach((o,i)=>{
-    const n=i+1;
-    if(+o.sequentialNumber!==n){ o.sequentialNumber=n; changed=true; }
-  });
-  const next=list.length;
-  if(+state.seq!==next){ state.seq=next; changed=true; }
-  const byId=new Map(list.map(o=>[o.id,o]));
+  const floor=maxLiveOrderSequentialNumber();
+  const seq=Number(state.seq)||0;
+  const next=Math.max(seq, floor);
+  if(next!==seq){ state.seq=next; changed=true; }
+  const byId=new Map((state.orders||[]).map(o=>[o.id,o]));
   (state.shifts||[]).forEach(s=>{
     if(!Array.isArray(s.orders)) return;
     s.orders.forEach((o,idx)=>{
@@ -1864,11 +1880,10 @@ function compactSequentialNumbers(){
       if(live) s.orders[idx]=live;
     });
   });
-  state.orders=list.slice().sort((a,b)=>new Date(b.createdAt||0)-new Date(a.createdAt||0));
   return changed;
 }
 function nextSequentialNumber(){
-  compactSequentialNumbers();
+  syncSequentialCounter();
   state.seq=(Number(state.seq)||0)+1;
   return state.seq;
 }
@@ -2488,11 +2503,10 @@ async function syncAllEpdSpacesFromServer(){
   return n;
 }
 function snapshot(){
-  // Отменённые никогда не уезжают на сервер — иначе старая вкладка воскрешает их.
-  const orders=stripCancelledFromOrders(state.orders);
+  const orders=stripTombstonedOrders(state.orders);
   const shifts=(state.shifts||[]).map(s=>{
     const copy={...s};
-    if(Array.isArray(copy.orders)) copy.orders=stripCancelledFromOrders(copy.orders);
+    if(Array.isArray(copy.orders)) copy.orders=stripTombstonedOrders(copy.orders);
     return copy;
   });
   return {
@@ -2641,7 +2655,7 @@ function applyPayload(p, opts){
   if(typeof pruneInvoicesForDeletedOrders==='function') pruneInvoicesForDeletedOrders();
   if(typeof migrateRestoreNechaevDriver==='function') migrateRestoreNechaevDriver();
   purgeDeletedDrivers();
-  compactSequentialNumbers();
+  syncSequentialCounter();
 }
 /** Водитель без владельца → админ с тем же ФИО (после migrateAdmins). */
 function migrateDriverOwners(){
@@ -3794,24 +3808,7 @@ async function armadaApiLogin(pin, meta){
     if(res.ok && data.token){ setArmadaApiToken(data.token); return data.token; }
   }catch(err){ console.warn('armada-api login', err); }
   return null;
-}
-async function armadaApiVerifyAdmin(login, pin){
-  if(!API_BASE || !login || !pin) return null;
-  try{
-    const res=await fetchWithTimeout(`${API_BASE}/auth/verify-admin`, {
-      method:'POST',
-      headers:{ 'Content-Type':'application/json', Accept:'application/json' },
-      body:JSON.stringify({ login, pin })
-    }, 12000);
-    const data=await res.json().catch(()=>({}));
-    if(res.ok && data.token){
-      setArmadaApiToken(data.token);
-      return data;
-    }
-  }catch(err){ console.warn('armada-api verify-admin', err); }
-  return null;
-}
-/** Смена своего PIN админа на сервере (не через PATCH snapshot). */
+}/** Смена своего PIN админа на сервере (не через PATCH snapshot). */
 async function armadaApiChangeAdminPin(oldPin, newPin){
   if(!API_BASE || !oldPin || !newPin) return { ok:false, error:'missing' };
   try{
