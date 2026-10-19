@@ -38,6 +38,37 @@ function renderAdminEntitlements() {
   const spaces = (state.spaces || [])
     .slice()
     .sort((a, b) => String(a.name || '').localeCompare(String(b.name || ''), 'ru'));
+  const ownerSpaces = spaces.filter((sp) => sp && sp.cabinetKind === 'owner_driver');
+  const ownerTableRows = ownerSpaces
+    .map((sp) => {
+      const iso =
+        typeof ownerPaidUntilIsoFromSpace === 'function' ? ownerPaidUntilIsoFromSpace(sp) : null;
+      const st =
+        typeof ownerSubscriptionStatusForSpace === 'function'
+          ? ownerSubscriptionStatusForSpace(sp)
+          : { phase: 'none' };
+      const label =
+        typeof ownerPaidUntilLabelForSpace === 'function'
+          ? ownerPaidUntilLabelForSpace(sp)
+          : '—';
+      const paidCell =
+        st.phase === 'expired'
+          ? `<span style="color:#dc2626;font-weight:600">${esc(label)}</span>`
+          : esc(label);
+      return `<tr>
+        <td>${esc(sp.name)}</td>
+        <td>${paidCell}</td>
+        <td class="meta">${esc(sp.id)}</td>
+      </tr>`;
+    })
+    .join('');
+  const ownerTable =
+    ownerSpaces.length
+      ? `<table class="data-table" style="width:100%;margin-bottom:14px;font-size:.9rem">
+        <thead><tr><th>Кабинет</th><th>Оплачено до</th><th>Space</th></tr></thead>
+        <tbody>${ownerTableRows}</tbody>
+      </table>`
+      : '<p class="empty">Нет кабинетов частных перевозчиков</p>';
   const spaceRows = spaces
     .map((sp) => {
       const cur = spaceProductTariffIdFromSpace(sp) || '';
@@ -60,9 +91,24 @@ function renderAdminEntitlements() {
         </label>`;
       }).join('');
       const maxV = resolved.maxVehicles != null ? resolved.maxVehicles : '—';
+      const kindBadge = sp.cabinetKind === 'owner_driver' ? ' · <span class="meta">частный перевозчик</span>' : '';
+      let paidBlock = '';
+      if (sp.cabinetKind === 'owner_driver' && typeof ownerPaidUntilLabelForSpace === 'function') {
+        const st = ownerSubscriptionStatusForSpace(sp);
+        const paidLabel = ownerPaidUntilLabelForSpace(sp);
+        const paidStyle = st.phase === 'expired' ? 'color:#dc2626;font-weight:600' : '';
+        paidBlock = `<p style="margin:8px 0"><span class="lbl">Оплачено до:</span> <b style="${paidStyle}">${esc(paidLabel)}</b></p>
+        <div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px">
+          <button type="button" class="secondary" data-ent-paid-add="${esc(sp.id)}" data-days="30">+30 дней</button>
+          <button type="button" class="secondary" data-ent-paid-add="${esc(sp.id)}" data-days="90">+90 дней</button>
+          <button type="button" class="secondary" data-ent-paid-set="${esc(sp.id)}">Указать дату</button>
+          <button type="button" class="secondary" data-ent-paid-block="${esc(sp.id)}">Заблокировать</button>
+        </div>`;
+      }
       return `<section class="card" style="margin-bottom:10px">
-        <h3>${esc(sp.name)}</h3>
+        <h3>${esc(sp.name)}${kindBadge}</h3>
         <p class="meta">Space ${esc(sp.id)} · итог лимит ТС: <b>${esc(String(maxV))}</b></p>
+        ${paidBlock}
         <div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:8px 0">
           <label class="meta">Продуктовый тариф</label>
           <select id="ent-tariff-${esc(sp.id)}" style="min-width:160px">
@@ -80,9 +126,23 @@ function renderAdminEntitlements() {
     })
     .join('');
 
-  form.innerHTML = `<p class="cat-panel-hint">Продуктовые модули кабинета собственника-водителя. Это <b>не</b> SaaS-тарифы из раздела «Тарифы и оплата». Сервер модулей пока не проверяет — только скрытие во фронте.</p>
-    <h2 class="owner-driver-h2">Шаблоны тарифов (роль собственник-водитель)</h2>
+  form.innerHTML = `<p class="cat-panel-hint">Продуктовые модули кабинета частного перевозчика. Это <b>не</b> SaaS-тарифы из раздела «Тарифы и оплата». Лимиты ТС и модули проверяются на API для кабинетов <code>cabinetKind=owner_driver</code>.</p>
+    <section class="card" style="margin-bottom:14px;border:1px solid rgba(59,130,246,.35)">
+      <h2 class="owner-driver-h2">Создать частного перевозчика</h2>
+      <p class="meta">Одним действием: фирма (тариф Базовый, 1 машина) + учётка + ТС. Вход только через <a href="/o/" target="_blank" rel="noopener">/o/</a>.</p>
+      <label>ФИО</label><input id="ent-new-owner-name" autocomplete="name" />
+      <label>Телефон</label><input id="ent-new-owner-phone" inputmode="tel" autocomplete="tel" />
+      <label>PIN (от 4 цифр)</label><input id="ent-new-owner-pin" inputmode="numeric" maxlength="8" autocomplete="off" />
+      <label>Название фирмы</label><input id="ent-new-owner-firm" />
+      <label>ИНН (необязательно)</label><input id="ent-new-owner-inn" inputmode="numeric" />
+      <label>Госномер машины</label><input id="ent-new-owner-plate" />
+      <button type="button" class="primary" id="ent-new-owner-submit" style="margin-top:10px">Создать кабинет</button>
+      <p class="error" id="ent-new-owner-error" role="status"></p>
+    </section>
+    <h2 class="owner-driver-h2">Шаблоны тарифов (роль частный перевозчик)</h2>
     ${tariffEditor || '<p class="empty">Нет тарифов в каталоге</p>'}
+    <h2 class="owner-driver-h2" style="margin-top:16px">Кабинеты частных перевозчиков — оплата</h2>
+    ${ownerTable}
     <h2 class="owner-driver-h2" style="margin-top:16px">Фирмы (space)</h2>
     ${spaceRows || '<p class="empty">Нет space</p>'}`;
 
@@ -91,6 +151,36 @@ function renderAdminEntitlements() {
     show('admin');
     renderAdmin();
   };
+
+  const createBtn = $('ent-new-owner-submit');
+  if (createBtn) {
+    createBtn.onclick = () => {
+      const errEl = $('ent-new-owner-error');
+      const setErr = (m) => {
+        if (errEl) errEl.textContent = m || '';
+      };
+      setErr('');
+      if (typeof createOwnerDriverCabinet !== 'function') {
+        setErr('Функция создания недоступна');
+        return;
+      }
+      const res = createOwnerDriverCabinet({
+        name: ($('ent-new-owner-name') || {}).value,
+        phone: ($('ent-new-owner-phone') || {}).value,
+        pin: ($('ent-new-owner-pin') || {}).value,
+        firmName: ($('ent-new-owner-firm') || {}).value,
+        inn: ($('ent-new-owner-inn') || {}).value,
+        plate: ($('ent-new-owner-plate') || {}).value,
+      });
+      if (!res || !res.ok) {
+        setErr('Заполните ФИО, телефон, PIN и госномер');
+        return;
+      }
+      if (typeof persist === 'function') persist();
+      setErr(`Готово: ${res.driver.name}, вход /o/ · ${formatPhone(res.driver.phone)}`);
+      renderAdminEntitlements();
+    };
+  }
 
   form.querySelectorAll('[data-ent-save-tariff]').forEach((btn) => {
     btn.onclick = () => {
@@ -118,6 +208,47 @@ function renderAdminEntitlements() {
       if (val) sp.productTariffId = val;
       else delete sp.productTariffId;
       if (typeof bumpDataEpoch === 'function') bumpDataEpoch('entitlements-space-tariff');
+      persist();
+      renderAdminEntitlements();
+    };
+  });
+
+  form.querySelectorAll('[data-ent-paid-add]').forEach((btn) => {
+    btn.onclick = () => {
+      const sid = btn.dataset.entPaidAdd;
+      const days = Number(btn.dataset.days) || 0;
+      const sp = findSpaceById(sid);
+      if (!sp || typeof extendOwnerPaidUntilOnSpace !== 'function') return;
+      extendOwnerPaidUntilOnSpace(sp, days);
+      if (typeof bumpDataEpoch === 'function') bumpDataEpoch('entitlements-owner-paid');
+      persist();
+      renderAdminEntitlements();
+    };
+  });
+  form.querySelectorAll('[data-ent-paid-set]').forEach((btn) => {
+    btn.onclick = () => {
+      const sid = btn.dataset.entPaidSet;
+      const sp = findSpaceById(sid);
+      if (!sp) return;
+      const cur =
+        typeof ownerPaidUntilIsoFromSpace === 'function' ? ownerPaidUntilIsoFromSpace(sp) : '';
+      const hint = cur && cur.slice(0, 10) ? cur.slice(0, 10) : '';
+      const raw = window.prompt('Оплачено до (ГГГГ-ММ-ДД)', hint);
+      if (!raw) return;
+      if (typeof setOwnerPaidUntilOnSpace === 'function') setOwnerPaidUntilOnSpace(sp, raw.trim());
+      if (typeof bumpDataEpoch === 'function') bumpDataEpoch('entitlements-owner-paid-set');
+      persist();
+      renderAdminEntitlements();
+    };
+  });
+  form.querySelectorAll('[data-ent-paid-block]').forEach((btn) => {
+    btn.onclick = () => {
+      const sid = btn.dataset.entPaidBlock;
+      const sp = findSpaceById(sid);
+      if (!sp || typeof blockOwnerSubscriptionOnSpace !== 'function') return;
+      if (!window.confirm('Заблокировать запись для этого кабинета (подписка в прошлом)?')) return;
+      blockOwnerSubscriptionOnSpace(sp);
+      if (typeof bumpDataEpoch === 'function') bumpDataEpoch('entitlements-owner-paid-block');
       persist();
       renderAdminEntitlements();
     };

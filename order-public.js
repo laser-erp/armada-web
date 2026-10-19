@@ -1,6 +1,6 @@
 /* order.html — публичная заявка с armada.sx (CSP: без inline) */
 (function () {
-  var BUILD = (typeof globalThis !== 'undefined' && globalThis.ARMADA_APP_BUILD) || '2026-10-06-owner-drv-2';
+  var BUILD = (typeof globalThis !== 'undefined' && globalThis.ARMADA_APP_BUILD) || '2026-10-19-fix409';
   var OFFLINE_MSG = 'Нет связи с сервером. Заявка не отправлена — проверьте интернет и нажмите «Отправить заявку» ещё раз.';
   var form = null;
   var statusEl = null;
@@ -47,9 +47,13 @@
 
   /** store.js грузится только при отправке заявки (ensureStoreForSubmit), не при открытии страницы. */
   function ensureStoreForSubmit() {
-    if (typeof appendCustomerPortalLead === 'function') return Promise.resolve();
+    function pullStateFromServer() {
+      if (typeof initCloudSync !== 'function') return Promise.resolve();
+      return initCloudSync();
+    }
+    if (typeof appendCustomerPortalLead === 'function') return pullStateFromServer();
     window.ARMADA_PUBLIC_ORDER_STANDALONE = true;
-    return loadScript('/store.js?v=' + encodeURIComponent(BUILD));
+    return loadScript('/store.js?v=' + encodeURIComponent(BUILD)).then(pullStateFromServer);
   }
 
   function deckHeightM(vtypeId) {

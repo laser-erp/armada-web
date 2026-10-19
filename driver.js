@@ -89,17 +89,54 @@ function saveDriverSession(){
     }));
   }catch(_){}
 }
+/** store.js читает globalThis.DRIVER — в браузере отдельный let DRIVER в store.js. */
+function mirrorDriverSessionToGlobal(){
+  try{
+    const g=typeof globalThis!=='undefined'?globalThis:(typeof window!=='undefined'?window:null);
+    if(!g) return;
+    g.DRIVER=typeof DRIVER!=='undefined'?String(DRIVER||'').trim():'';
+    g.DRIVER_COMPANY_ID=typeof DRIVER_COMPANY_ID!=='undefined'?DRIVER_COMPANY_ID:null;
+  }catch(_){}
+}
 function clearDriverSession(){
   try{ localStorage.removeItem(DRIVER_SESSION_KEY); }catch(_){}
+  if(typeof setArmadaApiToken==='function') setArmadaApiToken('');
+  if(typeof armadaStateEtagClear==='function') armadaStateEtagClear();
   DRIVER="";
   DRIVER_COMPANY_ID=null;
+  mirrorDriverSessionToGlobal();
+}
+const OWNER_DRIVER_ENTRY_REDIRECT_MSG='Кабинет частного перевозчика теперь по адресу /o/';
+function redirectOwnerToOEntry(showErr){
+  const msg=OWNER_DRIVER_ENTRY_REDIRECT_MSG;
+  if(typeof showErr==='function') showErr(msg);
+  const err=$('drv-login-error');
+  if(err){
+    const link='<a href="/o/">Перейти на /o/</a>';
+    err.innerHTML=typeof esc==='function'?`${esc(msg)} ${link}`:`${msg} ${link}`;
+  }
+  if(typeof show==='function') show('driver-login');
+  if(typeof applyEntrySkin==='function') applyEntrySkin('driver-login');
 }
 function restoreDriverSession(){
+  if(typeof armadaApiTokenRole==='function' && armadaApiTokenRole()==='owner_driver'){
+    clearDriverSession();
+    return false;
+  }
   let raw=null;
   try{ raw=JSON.parse(localStorage.getItem(DRIVER_SESSION_KEY)||'null'); }catch(_){ raw=null; }
   if(!raw||!raw.name) return false;
   const rec=findDriverRecord(raw.name, raw.companyId)||findDriverRecord(raw.name, null);
+  if(rec && typeof shouldRedirectOwnerFromDriverEntry==='function' && shouldRedirectOwnerFromDriverEntry(rec)){
+    clearDriverSession();
+    return false;
+  }
   if(!rec){ clearDriverSession(); return false; }
+  const roleJwtOk=typeof armadaApiRoleTokenUsable==='function'?armadaApiRoleTokenUsable():false;
+  if(!roleJwtOk){
+    clearDriverSession();
+    return false;
+  }
   DRIVER=rec.name;
   DRIVER_COMPANY_ID=rec.companyId||raw.companyId||null;
   if(!DRIVER_COMPANY_ID){
@@ -111,6 +148,7 @@ function restoreDriverSession(){
     const co=findCompanyById(DRIVER_COMPANY_ID);
     if(co && !rec.companyName) rec.companyName=co.name;
   }
+  mirrorDriverSessionToGlobal();
   return true;
 }
 function peekAdminSessionName(){
@@ -403,11 +441,28 @@ function continueDriverPhone(){
 }
 async function tryDriverPhoneLogin(phone, showErr){
   let byPhone=findDriversByPhone(phone);
-  if(!byPhone.length && typeof syncDriversCatalogForLogin==='function'){
+  const apiLoginPath=!!API_BASE;
+  if(!byPhone.length && typeof syncDriversCatalogForLogin==='function' && !apiLoginPath){
     await syncDriversCatalogForLogin(showErr);
     byPhone=findDriversByPhone(phone);
+  }else if(typeof showErr==='function' && apiLoginPath && !byPhone.length){
+    showErr('');
+  }
+  if(typeof shouldRedirectOwnerFromDriverEntry==='function'){
+    byPhone=byPhone.filter(d=>!shouldRedirectOwnerFromDriverEntry(d));
   }
   if(!byPhone.length){
+    if(typeof findDriversByPhone==='function'){
+      const anyOwner=findDriversByPhone(phone).some(
+        d=>typeof shouldRedirectOwnerFromDriverEntry==='function'&&shouldRedirectOwnerFromDriverEntry(d)
+      );
+      if(anyOwner){ redirectOwnerToOEntry(showErr); return; }
+    }
+    if(apiLoginPath){
+      driverLoginSelected=null;
+      showDriverPinStep();
+      return;
+    }
     showErr('Телефон не найден. Админ должен указать его в «Справочники → Водители».');
     return;
   }
@@ -428,7 +483,15 @@ async function tryDriverPhoneLogin(phone, showErr){
 function openDriverLogin(fromAdmin){
   if(!fromAdmin && typeof restoreDriverSession==='function' && restoreDriverSession()){
     const rec=findDriverRecord(DRIVER, DRIVER_COMPANY_ID)||findDriverRecord(DRIVER, null);
-    if(rec){ enterAsDriver(rec); return; }
+    if(rec){
+      if(typeof shouldRedirectOwnerFromDriverEntry==='function'&&shouldRedirectOwnerFromDriverEntry(rec)){
+        clearDriverSession();
+        redirectOwnerToOEntry();
+        return;
+      }
+      enterAsDriver(rec);
+      return;
+    }
   }
   setDriverFromAdmin(!!fromAdmin);
   const guestDedicatedNoSession=
@@ -509,6 +572,31 @@ async function doLoginDriverPin(showErr){
       enterAsDriver({...local, ...rec});
       return;
     }
+    if(verified&&verified.__verifyFail&&verified.error==='ambiguous'&&Array.isArray(verified.drivers)){
+      const stubs=verified.drivers.map(d=>({ id:d.id, name:d.name, phone }));
+      showDriverPickStep(stubs);
+      showErr('Выберите профиль и введите PIN снова');
+      return;
+    }
+    if(typeof armadaApiVerifyOwnerDriver==='function'){
+      const ownerVerified=await armadaApiVerifyOwnerDriver(phone, pin);
+      if(ownerVerified&&ownerVerified.token&&ownerVerified.driver){
+        redirectOwnerToOEntry(showErr);
+        return;
+      }
+      const hiredFail=verified&&verified.__verifyFail?verified:null;
+      const ownerFail=ownerVerified&&ownerVerified.__verifyFail?ownerVerified:null;
+      if(hiredFail||ownerFail){
+        const errCode=hiredFail&&hiredFail.error!=='phone_not_found'?hiredFail.error:(ownerFail&&ownerFail.error)||(hiredFail&&hiredFail.error)||'';
+        if(errCode==='wrong_pin'){ showErr('Неверный PIN'); return; }
+        if(errCode==='phone_not_found'){ showErr('Телефон не найден. Админ должен указать его в «Справочники → Водители».'); return; }
+        if(errCode==='ambiguous'){ showErr('Несколько профилей на этот телефон — уточните у администратора'); return; }
+      }
+      if(!rec && !(findDriversByPhone(phone)||[]).length){
+        showErr('Неверный PIN');
+        return;
+      }
+    }
   }
   if(rec){
     if(formatPhone(rec.phone||'')!==phone){ showErr('Телефон не совпадает с выбранным профилем'); return; }
@@ -533,6 +621,10 @@ async function doLoginDriverPin(showErr){
     rec=matched[0];
   }
   if(!rec){ showErr('Профиль водителя не найден'); return; }
+  if(typeof shouldRedirectOwnerFromDriverEntry==='function'&&shouldRedirectOwnerFromDriverEntry(rec)){
+    redirectOwnerToOEntry(showErr);
+    return;
+  }
   if(String(rec.pin||'').trim()!==pin){
     rec.pin=pin;
     findDriversByPhone(phone).forEach(d=>{ if(samePersonName(d.name, rec.name)) d.pin=pin; });
@@ -543,8 +635,14 @@ async function doLoginDriverPin(showErr){
 }
 async function enterAsDriver(rec){
   if(!rec||!rec.name) return;
+  if(typeof shouldRedirectOwnerFromDriverEntry==='function'&&shouldRedirectOwnerFromDriverEntry(rec)){
+    clearDriverSession();
+    redirectOwnerToOEntry();
+    return;
+  }
   DRIVER=String(rec.name||'').trim();
   if(!DRIVER){ alert('Не выбрано ФИО водителя'); return; }
+  mirrorDriverSessionToGlobal();
   DRIVER_COMPANY_ID=rec.companyId||null;
   if(!DRIVER_COMPANY_ID){
     const bind=resolveDriverOrderBinding(DRIVER, '');
@@ -555,6 +653,7 @@ async function enterAsDriver(rec){
     const lbl=typeof driverCompanyLabel==='function'?driverCompanyLabel(rec):'';
     if(lbl && rec.companyName!==lbl){ rec.companyName=lbl; bumpDataEpoch('driver-company-label'); persist(); }
   }
+  mirrorDriverSessionToGlobal();
   // Админ-сессию в localStorage оставляем — из водителя можно вернуться.
   // В памяти currentAdmin сбрасываем, чтобы режим водителя не смешивался с правами админа.
   if(currentAdmin){
@@ -564,6 +663,7 @@ async function enterAsDriver(rec){
   }
   saveDriverSession();
   updateDriverChrome();
+  if(typeof armadaSyncEntryBranding==='function') armadaSyncEntryBranding();
   show('driver');
   setDriverNav('btn-home');
   state.shift=null;
@@ -585,12 +685,17 @@ async function enterAsDriver(rec){
       if(recState){
         pbRecordId=recState.id;
         if(typeof touchSyncServerOk==='function') touchSyncServerOk();
-        applyPayload(recState.payload||{}, {keepOrders:localOrders, remoteSeq:true});
-        if(typeof mergeRemoteOrderAssignments==='function') mergeRemoteOrderAssignments(recState.payload||{});
+        if(recState.unchanged) return;
+        if(!recState.payload) return;
+        applyPayload(recState.payload, {keepOrders:localOrders, remoteSeq:true});
+        if(typeof mergeRemoteOrderAssignments==='function') mergeRemoteOrderAssignments(recState.payload);
         if(typeof reconcileOrdersAfterSync==='function') reconcileOrdersAfterSync();
         else if(typeof healOrphanOrdersIntoShifts==='function') healOrphanOrdersIntoShifts();
         migrateEtoFromMessages();
-        localStorage.setItem(KEY, JSON.stringify(snapshot()));
+        if(typeof persistSnapshotToLocalStorage==='function') persistSnapshotToLocalStorage();
+        else{
+          try{ localStorage.setItem(KEY, JSON.stringify(typeof snapshotForLocalStorage==='function'?snapshotForLocalStorage():snapshot())); }catch(err){ console.warn('enterAsDriver local', err); }
+        }
         state.shift=null;
         resetChat();
         if(!(state.messages||[]).some(m=>String(m.text||'').includes('Вы вошли как'))){
@@ -599,13 +704,18 @@ async function enterAsDriver(rec){
         renderChat();
         renderInput();
         renderDriverBanner();
-        renderDriverHome();
+        if(typeof updateDriverChrome==='function') updateDriverChrome();
+        else if(typeof renderDriverHome==='function') renderDriverHome();
         if(window.ArmadaOnboarding) ArmadaOnboarding.maybeDriver();
         if(document.querySelector('#orders-panel.show')&&typeof showOrders==='function') showOrders();
       }
       if(typeof ensureArmadaApiToken==='function'){
-        const ok=await ensureArmadaApiToken({ pin:'sync', meta:{ role:'sync' } });
-        if(ok && typeof touchSyncServerOk==='function') touchSyncServerOk();
+        const keepDriverJwt=typeof armadaApiPreserveDriverJwtInCabinet==='function'
+          &&armadaApiPreserveDriverJwtInCabinet();
+        if(!keepDriverJwt){
+          const ok=await ensureArmadaApiToken({ pin:'sync', meta:{ role:'sync' } });
+          if(ok && typeof touchSyncServerOk==='function') touchSyncServerOk();
+        }
       }
       if(typeof flushDriverSyncWhenOnline==='function') flushDriverSyncWhenOnline();
       else if(typeof updateDriverNetHint==='function') updateDriverNetHint();
@@ -637,7 +747,7 @@ async function leaveDriverMode(){
   } else if(getEntryMode()==='driver'){
     openDriverLogin(false);
   } else {
-    show('roles');
+    armadaGoPublicLanding();
   }
 }
 /** Восстановить вход после обновления страницы (без повторного PIN). */
@@ -742,7 +852,9 @@ function driverNumInputAriaLabel(){
   if(os==='fuelPrice') return 'Цена топлива за литр';
   if(os==='fuelAmount') return 'Объём заправки, литры';
   if(state.step==='odometer') return 'Показания одометра до выезда';
-  if(state.step==='fuel') return 'Остаток топлива, литры';
+  if(state.step==='fuel' && state.etoFuelSub==='price') return 'Цена топлива за литр';
+  if(state.step==='fuel' && state.etoFuelSub==='liters') return 'Объём заправки, литры';
+  if(state.step==='fuel') return 'Заправка на ЕТО';
   return 'Введите число';
 }
 function driverNumInputAttrs(extra){
@@ -810,9 +922,14 @@ function renderEtoStepHtml(){
       html+=`<div class="hint">Показания одометра до выезда</div>`;
       html+=driverNumInputRow(`inputmode="numeric" placeholder="${esc(ph)}" ${sug!=null?`value="${esc(String(sug))}"`:''}`);
       if(sug!=null) html+=`<button class="secondary" id="eto-odo-keep">Как вчера: ${esc(String(sug))}</button>`;
+    } else if(state.etoFuelSub==='price'||state.etoFuelSub==='liters'){
+      const hint=state.etoFuelSub==='price'?'Укажите стоимость литра (₽/л).':'Укажите количество литров.';
+      const ph=state.etoFuelSub==='price'?'Например, 56.5':'Например, 40';
+      html+=`<div class="hint">${esc(hint)}</div>`;
+      html+=driverNumInputRow(`inputmode="decimal" placeholder="${esc(ph)}"`);
     } else {
-      html+=`<div class="hint">Остаток топлива, л</div>`;
-      html+=driverNumInputRow('inputmode="decimal" placeholder="Например, 42"');
+      html+=`<div class="hint driver-step-hint">Заправлялись перед сменой?</div>`;
+      html+=`<div class="yesno driver-eto-fuel-yesno"><button type="button" class="primary" id="eto-fuel-yes">Заправлялся</button><button type="button" class="secondary" id="eto-fuel-no">Не заправлялся</button></div>`;
     }
     html+=`<button class="secondary" id="eto-restart">Сбросить шаги осмотра</button>`;
     return html;
@@ -838,6 +955,8 @@ function wireEtoPanelInput(){
   document.querySelectorAll('#eto-body .fluid').forEach(b=>b.onclick=()=>selectFluid(b.dataset.level));
   $('eto-restart')&&($('eto-restart').onclick=restartEtoInspection);
   $('eto-restart-panel')&&($('eto-restart-panel').onclick=restartEtoInspection);
+  $('eto-fuel-yes')&&($('eto-fuel-yes').onclick=()=>answerEtoRefuel(true));
+  $('eto-fuel-no')&&($('eto-fuel-no').onclick=()=>answerEtoRefuel(false));
   document.querySelectorAll('#eto-body .yesno button[data-key]').forEach(b=>b.onclick=()=>{state.light[b.dataset.key]=b.dataset.val;state.error='';renderEtoPanel();});
   $('lights-ok')&&($('lights-ok').onclick=submitLights);
   wireDriverChatInputs();
@@ -1023,6 +1142,8 @@ async function restartEtoInspection(){
   shift.odometer=null;
   shift.fuelLiters=null;
   shift.fuelRemainingLiters=null;
+  shift.fuelPricePerLiter=null;
+  shift.etoRefueled=null;
   shift.gur=null; shift.powerSteeringLevel=null;
   shift.coolant=null; shift.coolantLevel=null;
   shift.oil=null; shift.engineOilLevel=null;
@@ -1030,7 +1151,7 @@ async function restartEtoInspection(){
   state.light={};
   state.shift=shift;
   state.step=shift.vehiclePlate?'odometer':'chooseVehicle';
-  state.orderStep='idle'; state.draft={}; state.error='';
+  state.orderStep='idle'; state.draft={}; state.etoFuelSub=null; state.error='';
   if(shift.vehiclePlate){
     const prevOdo=previousShiftOdometerForPlate(shift.vehiclePlate, shift.ownCompanyId, DRIVER||shift.driverName);
     const floor=prevOdo??fallbackOdometerForPlate(shift.vehiclePlate, shift.ownCompanyId);
@@ -1213,7 +1334,7 @@ function resumeOpenShift(shift){
   }
   if(!shift.vehiclePlate) state.step='chooseVehicle';
   else if(shift.odometer==null) state.step='odometer';
-  else if(shift.fuelLiters==null) state.step='fuel';
+  else if(shift.fuelLiters==null){ state.step='fuel'; state.etoFuelSub='choose'; }
   else if(!(shift.gur||shift.powerSteeringLevel)) state.step='gur';
   else if(!(shift.coolant||shift.coolantLevel)) state.step='coolant';
   else if(!state.light.lowBeam || !state.light.brake || !state.light.turn) state.step='lights';
@@ -1237,7 +1358,7 @@ function resumeOpenShift(shift){
   // Синхронизируем последнюю подсказку бота с реальным шагом (чат мог отстать от полей)
   const stepHints={
     odometer:'Напишите показания одометра до выезда со стоянки.',
-    fuel:'Введите остаток топлива в литрах.',
+    fuel:'Заправлялись перед сменой? Кнопки «Заправлялся» / «Не заправлялся».',
     gur:'Проверьте и укажите уровень жидкости ГУР:\n• Максимум\n• Середина\n• Минимум',
     coolant:'Проверьте и укажите уровень ОЖ:\n• Максимум\n• Середина\n• Минимум',
     lights:'Проверьте осветительные приборы. Отметьте каждый пункт.',
@@ -1309,8 +1430,8 @@ function selectVehicle(plate){
   add('driver',plate);
   // Одометр уже проставлен при «закрыть вчера → открыть сегодня»
   if(state.shift.odometer!=null){
-    add('bot',`Авто ${plate}. Одометр ЕТО уже ${state.shift.odometer}.\nВведите остаток топлива в литрах.`);
-    state.step='fuel'; state.error=''; upsertShift(); renderInput(); return;
+    add('bot',`Авто ${plate}. Одометр ЕТО уже ${state.shift.odometer}.\nЗаправлялись перед сменой?`);
+    state.step='fuel'; state.etoFuelSub='choose'; state.error=''; upsertShift(); renderInput(); return;
   }
   const prevOdo=previousShiftOdometerForPlate(plate, state.shift.ownCompanyId, DRIVER);
   const floor=prevOdo??fallbackOdometerForPlate(plate, state.shift.ownCompanyId);
@@ -1406,13 +1527,22 @@ function submitNumber(){
       bumpDataEpoch('eto-odo-closed-prev-shift');
       add('bot',`Вчерашняя смена на ${state.shift.vehiclePlate} закрыта одометром ЕТО ${value} (стоянка).`);
     }
-    add('driver',String(value)); add('bot','Введите остаток топлива в литрах.'); state.step='fuel';
+    add('driver',String(value)); add('bot','Заправлялись перед сменой?'); state.step='fuel'; state.etoFuelSub='choose';
   } else if(state.step==='fuel'){
-    const value=+raw; if(!(value>=0)){state.error='Введите остаток топлива в литрах';renderInput();return;}
-    state.shift.fuelLiters=value;
-    state.shift.fuelRemainingLiters=value; // стартовый остаток = ЕТО; дальше только fuelRemainingLiters
-    add('driver',`${value} л`);
-    add('bot','Проверьте и укажите уровень жидкости ГУР:\n• Максимум\n• Середина\n• Минимум'); state.step='gur';
+    if(state.etoFuelSub==='price'){
+      const price=+raw; if(!(price>0)){state.error='Введите стоимость литра, например 56.5';renderInput();return;}
+      state.draft=state.draft||{}; state.draft.etoFuelPrice=price;
+      add('driver',`${price} ₽/л`); add('bot','Укажите количество литров.');
+      state.etoFuelSub='liters'; state.error=''; upsertShift(); renderInput(); return;
+    }
+    if(state.etoFuelSub==='liters'){
+      const liters=+raw; if(!(liters>0)){state.error='Введите количество литров, например 40';renderInput();return;}
+      const price=state.draft&&state.draft.etoFuelPrice;
+      if(!(price>0)){state.error='Сначала укажите цену литра';state.etoFuelSub='price';renderInput();return;}
+      add('driver',`${liters} л`);
+      finishEtoFuelStep(true, price, liters); return;
+    }
+    state.error='Выберите «Заправлялся» или «Не заправлялся»'; renderInput(); return;
   }
   state.error=''; upsertShift(); renderInput();
 }
@@ -1662,7 +1792,12 @@ function acceptArrive(value){
   const shift=state.shift||findOpenShift();
   if(!shift||shift.endedAt){ state.error='Сначала откройте смену'; renderInput(); return; }
   state.shift=shift;
-  const order=state.orders.find(o=>o.id===state.draft.assignedId); if(!order){ state.error='Заказ не найден'; renderInput(); return; }
+  let orderId=state.draft&&state.draft.assignedId;
+  if(!orderId&&typeof enRouteOrder==='function'){
+    const en=enRouteOrder();
+    if(en) orderId=en.id;
+  }
+  const order=state.orders.find(o=>o.id===orderId); if(!order){ state.error='Заказ не найден'; renderInput(); return; }
   const prev=order.previousOdometer??shift.lastOdometerPoint??shift.odometer;
   const minOdo=order.departOdometer!=null?order.departOdometer:prev;
   if(prev==null){ state.error='Нет одометра смены'; renderInput(); return; }
@@ -1899,7 +2034,8 @@ function acceptCloseShiftParking(value){
   clearCloseShiftReminder();
   syncVehicleOdometerFromShift(state.shift);
   bumpDataEpoch('shift-end-odo');
-  upsertShift(); persist();
+  upsertShift();
+  driverFlushPersistAndPushServer('PB shift-close push');
   resetChat();
   armExitGuard();
 }
@@ -1919,15 +2055,76 @@ function answerYesNo(yes){
 }
 const DEFAULT_FUEL_PRICE_PER_LITER=80;
 function lastFuelPricePerLiter(plate, exceptId){
-  const scored=allOrders()
+  const scored=[];
+  allOrders()
     .filter(o=>o.id!==exceptId && o.fuelPricePerLiter!=null && +o.fuelPricePerLiter>0)
-    .map(o=>({
-      o,
-      samePlate: plate && o.vehiclePlate===plate ? 1 : 0,
-      t: new Date(o.closedAt||o.createdAt).getTime()
-    }))
-    .sort((a,b)=> (b.samePlate-a.samePlate) || (b.t-a.t));
-  return scored.length?+scored[0].o.fuelPricePerLiter:null;
+    .forEach(o=>{
+      scored.push({
+        price:+o.fuelPricePerLiter,
+        samePlate: plate && o.vehiclePlate===plate ? 1 : 0,
+        t: new Date(o.closedAt||o.createdAt).getTime()
+      });
+    });
+  (state.shifts||[])
+    .filter(s=>s && s.id!==exceptId && s.fuelPricePerLiter!=null && +s.fuelPricePerLiter>0
+      && (!plate || s.vehiclePlate===plate))
+    .forEach(s=>{
+      scored.push({
+        price:+s.fuelPricePerLiter,
+        samePlate: plate && s.vehiclePlate===plate ? 1 : 0,
+        t: new Date(s.endedAt||s.startedAt||0).getTime()
+      });
+    });
+  scored.sort((a,b)=> (b.samePlate-a.samePlate) || (b.t-a.t));
+  return scored.length?scored[0].price:null;
+}
+function driverFlushPersistAndPushServer(logLabel){
+  if(typeof persistLocalOnly==='function') persistLocalOnly();
+  if(typeof pushServerStateQueued!=='function') return;
+  clearTimeout(persistTimer);
+  pushServerStateQueued().then(()=>{ if(typeof applySyncPushSuccess==='function') applySyncPushSuccess(); else syncStatus='ok'; }).catch(err=>{ if(typeof applySyncPushFailure==='function') applySyncPushFailure(err, logLabel); else { syncStatus='error'; console.warn(logLabel, err); } });
+}
+function finishEtoFuelStep(refueled, price, liters){
+  const shift=state.shift;
+  if(!shift) return;
+  const p=price!=null && +price>0?+price:resolveFuelPriceWithoutRefuel(shift.vehiclePlate, null);
+  shift.etoRefueled=!!refueled;
+  shift.fuelPricePerLiter=p;
+  const remBase=typeof resolveFuelRemainingBefore==='function'?resolveFuelRemainingBefore(shift.vehiclePlate, null, null):null;
+  if(refueled){
+    const l=+liters;
+    shift.fuelLiters=l;
+    shift.fuelRemainingLiters=remBase!=null?remBase+l:l;
+  } else {
+    shift.fuelLiters=0;
+    shift.fuelRemainingLiters=remBase!=null?remBase:0;
+  }
+  state.etoFuelSub=null;
+  state.step='gur';
+  add('bot','Проверьте и укажите уровень жидкости ГУР:\n• Максимум\n• Середина\n• Минимум');
+  state.error=''; upsertShift();
+  bumpDataEpoch('eto-fuel');
+  driverFlushPersistAndPushServer('PB eto fuel push');
+  renderInput();
+}
+function answerEtoRefuel(yes){
+  if(state.step!=='fuel') return;
+  if(yes){
+    add('driver','Заправлялся');
+    add('bot','Укажите стоимость литра (₽/л).');
+    state.etoFuelSub='price';
+    state.draft=state.draft||{};
+  } else {
+    add('driver','Не заправлялся');
+    const plate=state.shift&&state.shift.vehiclePlate;
+    const prev=lastFuelPricePerLiter(plate, state.shift&&state.shift.id);
+    const price=prev ?? DEFAULT_FUEL_PRICE_PER_LITER;
+    if(prev!=null) add('bot',`Заправки не было — цена литра с прошлой заправки: ${fmt(price)} ₽/л.`);
+    else add('bot',`Заправки не было — подставлена цена по умолчанию: ${fmt(price)} ₽/л.`);
+    finishEtoFuelStep(false, price, 0);
+    return;
+  }
+  state.error=''; upsertShift(); renderInput();
 }
 function resolveFuelPriceWithoutRefuel(plate, exceptId){
   return lastFuelPricePerLiter(plate, exceptId) ?? DEFAULT_FUEL_PRICE_PER_LITER;

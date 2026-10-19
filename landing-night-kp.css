@@ -1,0 +1,676 @@
+/* КП и связанные лендинги — «Ночная трасса» без анимации дороги */
+body.landing.landing--night-kp {
+  margin: 0;
+  background: #04050a;
+  color: #f2f2f4;
+  font-family: 'Onest', system-ui, sans-serif;
+  line-height: 1.55;
+  -webkit-font-smoothing: antialiased;
+}
+
+.kp-night-bg {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  background:
+    radial-gradient(ellipse 90% 55% at 75% 8%, rgba(224, 31, 38, 0.14), transparent 55%),
+    radial-gradient(ellipse 60% 40% at 10% 90%, rgba(40, 44, 80, 0.35), transparent),
+    linear-gradient(180deg, #0c0d14 0%, #04050a 28%, #04050a 100%);
+}
+
+.kp-shell {
+  position: relative;
+  z-index: 1;
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+body.landing--night-kp .kp-top {
+  position: sticky;
+  top: 0;
+  z-index: 40;
+  background: rgba(4, 5, 10, 0.88);
+  backdrop-filter: blur(14px);
+  border-bottom: 1px solid #1e2028;
+}
+
+body.landing--night-kp .top nav a.nav-text.is-active {
+  color: #fff;
+  background: rgba(224, 31, 38, 0.22);
+  border-radius: 10px;
+}
+
+body.landing--night-kp .landing-wrap {
+  max-width: min(960px, 100%);
+  margin: 0 auto;
+  padding: 0 clamp(16px, 4vw, 24px) 48px;
+  flex: 1;
+}
+
+body.landing--night-kp .landing-hero {
+  padding: 28px 0 24px;
+  display: grid;
+  gap: 24px;
+}
+
+@media (min-width: 720px) {
+  body.landing--night-kp .landing-hero {
+    grid-template-columns: 1.12fr 0.88fr;
+    align-items: center;
+    padding: 40px 0 32px;
+  }
+}
+
+body.landing--night-kp .landing-role-plate {
+  display: inline-block;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #ffb4b7;
+  background: rgba(224, 31, 38, 0.18);
+  padding: 6px 12px;
+  border-radius: 8px;
+  margin-bottom: 10px;
+  border: 1px solid rgba(224, 31, 38, 0.35);
+}
+
+body.landing--night-kp .landing-hero-badge {
+  display: inline-block;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: #d5d6dc;
+  background: rgba(255, 255, 255, 0.06);
+  padding: 5px 10px;
+  border-radius: 999px;
+  margin-bottom: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+}
+
+body.landing--night-kp .landing-hero h1 {
+  margin: 0 0 12px;
+  font-family: 'Unbounded', system-ui, sans-serif;
+  font-size: clamp(1.55rem, 4vw, 2.2rem);
+  font-weight: 800;
+  line-height: 1.12;
+}
+
+body.landing--night-kp .landing-hero-lead {
+  margin: 0 0 20px;
+  font-size: 1.05rem;
+  color: #a9aab2;
+  max-width: 38em;
+}
+
+body.landing--night-kp .landing-hero-note {
+  margin: 12px 0 0;
+  font-size: 0.85rem;
+  color: #8e9099;
+}
+
+body.landing--night-kp .landing-hero-note a {
+  color: #f2f2f4;
+  text-decoration: underline;
+}
+
+body.landing--night-kp .landing-hero-cta {
+  display: grid;
+  gap: 10px;
+  max-width: 100%;
+}
+
+@media (min-width: 520px) {
+  body.landing--night-kp .landing-hero-cta {
+    grid-template-columns: 1fr 1fr;
+    max-width: 560px;
+  }
+}
+
+body.landing--night-kp .landing-hero-cta--with-pilot {
+  max-width: 560px;
+}
+
+@media (min-width: 520px) {
+  body.landing--night-kp .landing-hero-cta--with-pilot .landing-hero-cta-pilot {
+    grid-column: 1 / -1;
+  }
+}
+
+body.landing--night-kp .landing-hero-cta .btn {
+  width: 100%;
+  min-height: 52px;
+  font-size: clamp(13px, 2.8vw, 15px);
+  white-space: normal;
+  text-align: center;
+  line-height: 1.2;
+}
+
+body.landing--night-kp .landing-hero-visual {
+  background: linear-gradient(145deg, rgba(224, 31, 38, 0.85) 0%, rgba(120, 12, 18, 0.95) 100%);
+  border-radius: 16px;
+  padding: 22px;
+  color: #fff;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.45);
+}
+
+body.landing--night-kp .landing-hero-visual h3 {
+  margin: 0 0 14px;
+  font-size: 1rem;
+  font-weight: 600;
+  opacity: 0.95;
+}
+
+body.landing--night-kp .landing-stat-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+body.landing--night-kp .landing-stat {
+  background: rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 10px;
+  padding: 12px 14px;
+}
+
+body.landing--night-kp .landing-stat b {
+  display: block;
+  font-size: 1.2rem;
+  font-weight: 800;
+  line-height: 1.15;
+}
+
+body.landing--night-kp .landing-stat span {
+  font-size: 0.78rem;
+  opacity: 0.9;
+  line-height: 1.35;
+}
+
+body.landing--night-kp .landing-trust {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  align-items: center;
+  padding: 8px 0 4px;
+  font-size: 0.82rem;
+  color: #8e9099;
+}
+
+body.landing--night-kp .landing-trust b {
+  color: #e8e9ed;
+}
+
+body.landing--night-kp .landing-section {
+  padding: 12px 0 20px;
+}
+
+body.landing--night-kp .landing-section h2 {
+  margin: 0 0 8px;
+  font-size: 1.25rem;
+  font-weight: 800;
+  font-family: 'Unbounded', system-ui, sans-serif;
+}
+
+body.landing--night-kp .landing-section-sub {
+  margin: 0 0 18px;
+  color: #a9aab2;
+  font-size: 0.95rem;
+}
+
+body.landing--night-kp .landing-card {
+  background: rgba(14, 15, 20, 0.72);
+  border-radius: 16px;
+  padding: 22px 20px;
+  margin-bottom: 14px;
+  border: 1px solid #24262e;
+}
+
+body.landing--night-kp .landing-card h2,
+body.landing--night-kp .landing-card h3 {
+  margin: 0 0 10px;
+}
+
+body.landing--night-kp .landing-card ul {
+  margin: 0;
+  padding-left: 1.2em;
+  color: #c9cad1;
+}
+
+body.landing--night-kp .landing-pain-grid {
+  display: grid;
+  gap: 12px;
+}
+
+@media (min-width: 600px) {
+  body.landing--night-kp .landing-pain-grid {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
+body.landing--night-kp .landing-pain {
+  border-radius: 12px;
+  padding: 16px;
+  border: 1px solid #2a2c35;
+}
+
+body.landing--night-kp .landing-pain.bad {
+  border-color: rgba(224, 31, 38, 0.45);
+  background: rgba(40, 10, 14, 0.55);
+}
+
+body.landing--night-kp .landing-pain.good {
+  border-color: rgba(43, 212, 111, 0.35);
+  background: rgba(10, 32, 22, 0.45);
+}
+
+body.landing--night-kp .landing-pain-label {
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin-bottom: 6px;
+}
+
+body.landing--night-kp .landing-pain.bad .landing-pain-label {
+  color: #ff8a8f;
+}
+
+body.landing--night-kp .landing-pain.good .landing-pain-label {
+  color: #5ee9a0;
+}
+
+body.landing--night-kp .landing-pain p {
+  margin: 0;
+  font-size: 0.92rem;
+  color: #d5d6dc;
+}
+
+body.landing--night-kp .landing-features {
+  display: grid;
+  gap: 12px;
+}
+
+@media (min-width: 640px) {
+  body.landing--night-kp .landing-features {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
+body.landing--night-kp .landing-feature {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  padding: 14px;
+  border: 1px solid #2a2c35;
+  border-radius: 12px;
+  background: rgba(10, 11, 16, 0.65);
+}
+
+body.landing--night-kp .landing-feature-icon {
+  flex: 0 0 36px;
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  background: rgba(224, 31, 38, 0.15);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.1rem;
+}
+
+body.landing--night-kp .landing-feature b {
+  display: block;
+  margin-bottom: 4px;
+  font-size: 0.95rem;
+}
+
+body.landing--night-kp .landing-feature p {
+  margin: 0;
+  font-size: 0.88rem;
+  color: #a9aab2;
+}
+
+body.landing--night-kp .landing-steps {
+  counter-reset: step;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+body.landing--night-kp .landing-steps li {
+  counter-increment: step;
+  position: relative;
+  padding: 0 0 18px 44px;
+  color: #c9cad1;
+}
+
+body.landing--night-kp .landing-steps li::before {
+  content: counter(step);
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  background: var(--red, #e01f26);
+  color: #fff;
+  font-weight: 700;
+  font-size: 0.85rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+body.landing--night-kp .landing-steps li:not(:last-child)::after {
+  content: '';
+  position: absolute;
+  left: 14px;
+  top: 32px;
+  bottom: 4px;
+  width: 2px;
+  background: #2a2c35;
+}
+
+body.landing--night-kp .landing-steps b {
+  display: block;
+  margin-bottom: 4px;
+  color: #f2f2f4;
+}
+
+body.landing--night-kp .landing-reviews {
+  display: grid;
+  gap: 12px;
+}
+
+body.landing--night-kp .landing-review {
+  border: 1px solid #2a2c35;
+  border-radius: 12px;
+  padding: 16px 18px;
+  background: rgba(10, 11, 16, 0.55);
+}
+
+body.landing--night-kp .landing-review q {
+  display: block;
+  margin: 0 0 10px;
+  font-size: 0.95rem;
+  font-style: normal;
+  color: #e8e9ed;
+}
+
+body.landing--night-kp .landing-review cite {
+  font-style: normal;
+  font-size: 0.82rem;
+  color: #8e9099;
+}
+
+body.landing--night-kp .landing-tariffs-note {
+  border: 1px solid #2a2c35;
+  border-radius: 16px;
+  padding: 22px 20px;
+  background: rgba(14, 15, 20, 0.65);
+  text-align: center;
+}
+
+body.landing--night-kp .landing-tariffs-note strong {
+  display: block;
+  font-family: 'Unbounded', system-ui, sans-serif;
+  font-size: 1.15rem;
+  margin-bottom: 8px;
+}
+
+body.landing--night-kp .landing-tariffs-note p {
+  margin: 0;
+  color: #a9aab2;
+  font-size: 0.95rem;
+}
+
+body.landing--night-kp .landing-tariffs-note a {
+  color: #ffb4b7;
+  font-weight: 700;
+}
+
+body.landing--night-kp .landing-pilot {
+  background: linear-gradient(135deg, rgba(224, 31, 38, 0.92) 0%, rgba(100, 10, 16, 0.95) 100%);
+  color: #fff;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+}
+
+body.landing--night-kp .landing-pilot h2,
+body.landing--night-kp .landing-pilot p {
+  color: #fff;
+}
+
+body.landing--night-kp .landing-pilot a {
+  color: #fff;
+  font-weight: 700;
+}
+
+body.landing--night-kp .landing-cta-bar {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 12px;
+}
+
+@media (min-width: 480px) {
+  body.landing--night-kp .landing-cta-bar {
+    flex-direction: row;
+    flex-wrap: wrap;
+  }
+}
+
+body.landing--night-kp .landing-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 44px;
+  padding: 12px 20px;
+  border-radius: 12px;
+  font-weight: 700;
+  text-decoration: none;
+  font-size: 1rem;
+  border: 2px solid transparent;
+  cursor: pointer;
+  text-align: center;
+  font-family: inherit;
+}
+
+body.landing--night-kp .landing-btn-primary,
+body.landing--night-kp a.landing-btn-primary {
+  background: var(--red, #e01f26);
+  color: #fff;
+  border-color: var(--red, #e01f26);
+}
+
+body.landing--night-kp .landing-btn-secondary {
+  background: #fff;
+  color: var(--red, #e01f26);
+  border-color: #fff;
+}
+
+body.landing--night-kp .landing-btn-ghost {
+  background: transparent;
+  color: #fff;
+  border-color: rgba(255, 255, 255, 0.35);
+}
+
+body.landing--night-kp .kp-footer {
+  margin-top: auto;
+  padding: 24px clamp(16px, 4vw, 48px) max(28px, env(safe-area-inset-bottom));
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  color: #8e9099;
+  font-size: 14px;
+  border-top: 1px solid #1e2028;
+  background: rgba(4, 5, 10, 0.6);
+}
+
+body.landing--night-kp .kp-footer a {
+  text-decoration: none;
+  min-height: 44px;
+  display: inline-flex;
+  align-items: center;
+  color: #d5d6dc;
+}
+
+body.landing--night-kp .kp-footer span {
+  display: flex;
+  gap: 18px;
+  flex-wrap: wrap;
+}
+
+body.landing--night-kp .landing-compare {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.88rem;
+}
+
+body.landing--night-kp .landing-compare th,
+body.landing--night-kp .landing-compare td {
+  text-align: left;
+  padding: 10px 8px;
+  border-bottom: 1px solid #2a2c35;
+  vertical-align: top;
+  color: #c9cad1;
+}
+
+body.landing--night-kp .landing-compare th {
+  color: #8e9099;
+  font-weight: 600;
+  font-size: 0.75rem;
+  text-transform: uppercase;
+}
+
+body.landing--night-kp .landing-hero--order {
+  margin-bottom: 8px;
+}
+
+body.landing--night-kp .landing-order-card {
+  max-width: 640px;
+  margin: 0 auto;
+}
+
+body.landing--night-kp .landing-lead-form {
+  display: grid;
+  gap: 12px;
+}
+
+body.landing--night-kp .landing-lead-form label {
+  display: grid;
+  gap: 6px;
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: #a9aab2;
+}
+
+body.landing--night-kp .landing-lead-form .req {
+  color: #ff6b6b;
+}
+
+body.landing--night-kp .landing-lead-form input,
+body.landing--night-kp .landing-lead-form textarea {
+  font: inherit;
+  font-weight: 500;
+  color: #f2f2f4;
+  background: #0e0f14;
+  border: 1px solid #2a2c35;
+  border-radius: 10px;
+  padding: 10px 12px;
+}
+
+body.landing--night-kp .landing-lead-status {
+  font-size: 0.85rem;
+  margin: 0;
+}
+
+body.landing--night-kp .landing-lead-status.is-ok {
+  color: #2bd46f;
+}
+
+body.landing--night-kp .landing-lead-status.is-err {
+  color: #ff6b6b;
+}
+
+body.landing--night-kp .landing-order-legal {
+  margin: 8px 0 0;
+  font-size: 0.78rem;
+  color: #8e9099;
+}
+
+body.landing--night-kp .landing-order-legal a {
+  color: #d5d6dc;
+}
+
+body.landing--night-kp .landing-lead-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  padding: 16px;
+  background: rgba(4, 5, 10, 0.78);
+}
+
+body.landing--night-kp .landing-lead-modal[hidden] {
+  display: none !important;
+}
+
+body.landing--night-kp .landing-lead-modal.show {
+  align-items: center;
+}
+
+body.landing--night-kp .landing-lead-dialog {
+  position: relative;
+  width: min(100%, 440px);
+  max-height: min(92vh, 720px);
+  overflow: auto;
+  background: linear-gradient(180deg, #0c0d14, #04050a);
+  border: 1px solid #2a2c35;
+  border-radius: 16px;
+  padding: 22px 20px 20px;
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.55);
+  color: #f2f2f4;
+}
+
+body.landing--night-kp .landing-lead-close {
+  position: absolute;
+  top: 10px;
+  right: 12px;
+  border: 0;
+  background: transparent;
+  font-size: 1.6rem;
+  line-height: 1;
+  cursor: pointer;
+  color: #a9aab2;
+  padding: 4px 8px;
+}
+
+body.landing--night-kp .landing-lead-dialog h2 {
+  margin: 0 0 8px;
+  font-size: 1.2rem;
+  font-family: 'Unbounded', system-ui, sans-serif;
+}
+
+body.landing--night-kp .landing-lead-intro {
+  margin: 0 0 16px;
+  font-size: 0.92rem;
+  color: #a9aab2;
+}
+
+body.landing--night-kp .landing-lead-success p {
+  margin: 0 0 10px;
+}
+
+@media (max-width: 719px) {
+  body.landing--night-kp .landing-hero-visual {
+    order: -1;
+  }
+}

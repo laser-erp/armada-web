@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="ru" translate="no">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Регистрация частного перевозчика — АРМАДА</title>
+  <meta name="description" content="Самостоятельная регистрация кабинета частного перевозчика: 1 машина, пробный период 30 дней." />
+  <meta name="theme-color" content="#04050A" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Unbounded:wght@700;900&family=Onest:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/landing-night.css?v=2026-10-17-kp1" />
+  <link rel="stylesheet" href="/landing-night-kp.css?v=2026-10-17-kp1" />
+</head>
+<body class="landing landing--night-kp">
+  <div class="kp-night-bg" aria-hidden="true"></div>
+  <div class="kp-shell">
+    <header class="top kp-top">
+      <a class="logo" href="/landing.html">
+        <i aria-hidden="true">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.6" stroke-linejoin="round" aria-hidden="true">
+            <path d="M3 20 12 4l9 16M7.5 13h9" />
+          </svg>
+        </i>
+        <b>АРМАДА</b>
+      </a>
+      <nav aria-label="Разделы">
+        <a class="nav-text" href="/kp-logist.html">Логисту</a>
+        <a class="nav-text" href="/kp.html">Транспортной компании</a>
+        <a class="nav-text" href="/kp-zakaz.html">Заказчику</a>
+        <a class="nav-text is-active" href="/kp-owner.html">Частному перевозчику</a>
+        <a class="nav-text" href="/legal.html#tariffs">Тарифы</a>
+        <a class="btn glass sm" href="/o/">Кабинет /o</a>
+      </nav>
+    </header>
+
+    <main class="landing-wrap">
+      <section class="landing-hero landing-hero--order">
+        <div>
+          <span class="landing-hero-badge">Частный перевозчик · кабинет /o</span>
+          <h1>Регистрация кабинета</h1>
+          <p class="landing-hero-lead">Форма регистрации частного перевозчика: после отправки — кабинет /o, одна машина, пробный период 30 дней. СМС-подтверждение пока не подключено — новые учётки супер может проверить вручную.</p>
+          <div class="landing-hero-cta">
+            <a class="btn red" href="/o/">Войти в кабинет</a>
+            <a class="btn glass" href="/kp-owner.html">Описание для частного перевозчика</a>
+          </div>
+          <p class="landing-hero-note">Пилот 3 месяца — <a href="/kp-owner.html#pilot">на странице КП</a> или <a href="/landing.html#pilot">с главной</a>.</p>
+        </div>
+      </section>
+
+      <section class="landing-section">
+        <div class="landing-card landing-order-card">
+          <form id="owner-reg-form" class="landing-lead-form landing-order-form">
+            <label>ФИО <span class="req">*</span>
+              <input type="text" id="owner-reg-name" required autocomplete="name" />
+            </label>
+            <label>Телефон <span class="req">*</span>
+              <input type="tel" id="owner-reg-phone" required autocomplete="tel" placeholder="+7 …" />
+            </label>
+            <label>PIN для входа (от 4 цифр) <span class="req">*</span>
+              <input type="password" id="owner-reg-pin" required inputmode="numeric" maxlength="8" autocomplete="new-password" />
+            </label>
+            <label>Название фирмы
+              <input type="text" id="owner-reg-firm" placeholder="Как в документах или ФИО" />
+            </label>
+            <label>ИНН (необязательно)
+              <input type="text" id="owner-reg-inn" inputmode="numeric" />
+            </label>
+            <label>Госномер машины <span class="req">*</span>
+              <input type="text" id="owner-reg-plate" required placeholder="А123АА77" />
+            </label>
+            <p class="landing-lead-status" id="owner-reg-status" hidden></p>
+            <button type="submit" class="landing-btn landing-btn-primary" id="owner-reg-submit">Создать кабинет</button>
+            <p class="landing-order-legal">Нажимая «Создать», вы соглашаетесь на обработку данных. <a href="/legal.html#privacy">Политика ПДн</a></p>
+          </form>
+          <div class="landing-lead-success landing-order-success" id="owner-reg-success" hidden>
+            <p><strong>Кабинет создан.</strong> Сейчас откроется вход.</p>
+            <a class="landing-btn landing-btn-primary" href="/o/" id="owner-reg-go">Перейти в кабинет</a>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <footer class="kp-footer">
+      <span>© АРМАДА · учёт перевозок</span>
+      <span>
+        <a href="/help.html">Помощь</a>
+        <a href="/legal.html">Оферта</a>
+        <a href="/landing.html">Главная</a>
+      </span>
+    </footer>
+  </div>
+
+  <script src="/owner-register.js?v=2026-10-15-owner-reg"></script>
+</body>
+</html>

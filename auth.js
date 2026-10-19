@@ -21,12 +21,7 @@ function findAdminByInnAndPin(innRaw, pin){
   const inn=normalizeLoginInn(innRaw);
   if(!inn) return null;
   const spaceIds=spaceIdsForLoginInn(inn);
-  if(!spaceIds.size){
-    // Пустая база / sync не подтянул фирмы — единственный супер с этим PIN
-    const supers=(state.admins||[]).filter(a=>a.isSuper && String(a.pin||'').trim()===pinStr);
-    if(supers.length===1) return supers[0];
-    return null;
-  }
+  if(!spaceIds.size) return null;
   const matches=(state.admins||[]).filter(a=>{
     // Супер-админ с loginBy=phone всё равно может войти по ИНН организации
     if(a.loginBy==='phone' && !a.isSuper) return false;
@@ -34,9 +29,6 @@ function findAdminByInnAndPin(innRaw, pin){
     return !!(a.spaceId && spaceIds.has(a.spaceId));
   });
   if(matches.length===1) return matches[0];
-  // Супер без spaceId — вход по ИНН любой нашей фирмы (единственный супер с этим PIN)
-  const loose=(state.admins||[]).filter(a=>a.isSuper && String(a.pin||'').trim()===pinStr);
-  if(loose.length===1) return loose[0];
   return null;
 }
 function adminLoginPhone(a){
@@ -115,6 +107,18 @@ function fillAdminLoginSelect(){
     }
   }
 }
+/** На /a/ admin.js грузится до app.js — хелпер нужен для updateAdminChrome при loginAdmin. */
+function isSuperAdmin(){ return !!(currentAdmin&&currentAdmin.isSuper); }
+/** Супер смотрит один кабинет (не «Все кабинеты») — UI как у логиста этого space. */
+function superAdminCabinetViewActive(){
+  if(!isSuperAdmin()) return false;
+  const f=(typeof state!=='undefined'&&state&&state.adminOwnerFilter)||'all';
+  return f!=='all'&&f!=='_none';
+}
+/** Супер-меню и глобальные права в интерфейсе (не режим одного кабинета). */
+function adminSuperUiActive(){
+  return isSuperAdmin()&&!superAdminCabinetViewActive();
+}
 function saveAdminSession(){
   if(!currentAdmin){ try{ localStorage.removeItem(ADMIN_SESSION_KEY); }catch(_){} return; }
   try{
@@ -146,6 +150,47 @@ function restoreAdminSession(){
 }
 function bumpAdminLoginListRefreshGen(){
   try{ globalThis.ARMADA_ADMIN_LIST_REFRESH_GEN=(globalThis.ARMADA_ADMIN_LIST_REFRESH_GEN||0)+1; }catch(_){}
+}
+function adminLoginForVerifyApi(loginRaw){
+  const raw=String(loginRaw||'').trim();
+  if(!raw) return '';
+  if(looksLikeAdminPhoneInput(raw)){
+    return typeof formatPhone==='function'?formatPhone(raw):raw;
+  }
+  const inn=normalizeLoginInn(raw);
+  if(inn&&(inn.length===10||inn.length===12)) return inn;
+  return raw;
+}
+function adminFromVerifyResponse(verified){
+  if(!verified||!verified.token) return null;
+  let adm=verified.admin?Object.assign({}, verified.admin):{};
+  if(!adm.id) adm.id=verified.adminId||null;
+  if(typeof decodeArmadaJwtPayload==='function'){
+    const pl=decodeArmadaJwtPayload(verified.token);
+    if(pl){
+      if(!adm.id) adm.id=pl.adminId||pl.sub||null;
+      adm.isSuper=!!(adm.isSuper||pl.isSuper);
+      if(pl.spaceId!=null) adm.spaceId=pl.spaceId;
+    }
+  }
+  if(!adm.id) return null;
+  if(!String(adm.name||'').trim()){
+    const loc=(state.admins||[]).find(a=>a&&a.id===adm.id);
+    if(loc&&loc.name) adm.name=loc.name;
+  }
+  delete adm.pin;
+  return adm;
+}
+async function verifyAdminViaApi(loginRaw, pin){
+  const login=adminLoginForVerifyApi(loginRaw);
+  const verified=await armadaApiVerifyAdmin(login, pin);
+  if(verified&&verified.invalidCredentials) return { rejected:true };
+  if(verified&&verified.token){
+    const adm=adminFromVerifyResponse(verified);
+    if(adm) return { ok:true, adm };
+    return { unavailable:true };
+  }
+  return { unavailable:true };
 }
 function upsertAdminInStateWithoutPin(adm){
   if(!adm||!adm.id) return;
@@ -185,35 +230,32 @@ async function loginAdmin(){
     return;
   }
   const hasApiBase=typeof API_BASE==='string'&&!!API_BASE;
+  const apiOnline=navigator.onLine!==false&&hasApiBase;
   let loginSyncOk=false;
   let loginSyncSlow=false;
   let adm=null;
   let verifiedByApi=false;
   let verifyRejected=false;
-  if(navigator.onLine!==false && hasApiBase && typeof armadaApiVerifyAdmin==='function'){
+  let apiVerifyUnavailable=false;
+  if(apiOnline && typeof armadaApiVerifyAdmin==='function'){
     if(pinErr) pinErr.textContent='Проверка PIN…';
-    const verified=await armadaApiVerifyAdmin(loginRaw, pin);
-    if(verified&&verified.invalidCredentials){
-      verifyRejected=true;
-    }else if(verified&&verified.token){
+    let vr=await verifyAdminViaApi(loginRaw, pin);
+    if(!vr.ok&&!vr.rejected&&vr.unavailable) vr=await verifyAdminViaApi(loginRaw, pin);
+    if(vr.rejected) verifyRejected=true;
+    else if(vr.ok&&vr.adm){
       verifiedByApi=true;
-      adm=verified.admin?{...verified.admin}:{id:verified.adminId||null, name:'', isSuper:!!verified.isSuper};
-      if(!adm.id&&typeof decodeArmadaJwtPayload==='function'){
-        const pl=decodeArmadaJwtPayload(verified.token);
-        if(pl){
-          adm.id=pl.adminId||pl.sub||adm.id;
-          adm.isSuper=!!pl.isSuper;
-          adm.spaceId=pl.spaceId||adm.spaceId||null;
-        }
-      }
-      delete adm.pin;
+      adm=vr.adm;
       upsertAdminInStateWithoutPin(adm);
       persistLocalOnly();
-    }
+    }else apiVerifyUnavailable=true;
     if(pinErr&&pinErr.textContent==='Проверка PIN…') pinErr.textContent='';
   }
   if(verifyRejected){
     if(pinErr) pinErr.textContent='Неверный PIN для этой организации';
+    return;
+  }
+  if(apiOnline&&apiVerifyUnavailable&&!verifiedByApi){
+    if(pinErr) pinErr.textContent='Сервер недоступен или отвечает слишком долго. Попробуйте позже.';
     return;
   }
   if(!verifiedByApi){
@@ -241,13 +283,15 @@ async function loginAdmin(){
       pinErr.textContent='Медленный ответ сервера, продолжаем в фоне…';
     }
     migrateAdmins();
-    if(!adm) adm=findAdminByLoginAndPin(loginRaw, pin);
+    if(!adm&&!apiOnline) adm=findAdminByLoginAndPin(loginRaw, pin);
   }
   if(!adm){
     if(pinErr){
-      if(hasApiBase&&navigator.onLine!==false&&!verifiedByApi&&!loginSyncOk){
+      if(apiOnline&&!verifiedByApi){
+        pinErr.textContent='Не удалось проверить PIN на сервере. Обновите страницу (Ctrl+F5) и попробуйте снова.';
+      }else if(hasApiBase&&navigator.onLine!==false&&!verifiedByApi&&!loginSyncOk){
         pinErr.textContent='Сервер недоступен или отвечает слишком долго. Попробуйте позже.';
-      }else if(hasApiBase&&navigator.onLine!==false&&!verifiedByApi&&loginSyncOk){
+      }else if(hasApiBase&&navigator.onLine!==false&&!verifiedByApi&&loginSyncOk&&!apiOnline){
         if(looksLikeAdminPhoneInput(loginRaw)){
           const phone=typeof formatPhone==='function'?formatPhone(loginRaw):String(loginRaw||'').trim();
           const phoneKnown=(state.admins||[]).some(a=>adminLoginPhone(a)===phone);
@@ -339,9 +383,10 @@ async function logoutAdmin(){
   clearAdminSession();
   clearAdminPinOk();
   setArmadaApiToken('');
+  if(typeof armadaStateEtagClear==='function') armadaStateEtagClear();
   updateAdminChrome();
   if(getEntryMode()==='admin') goEntryLanding('admin');
-  else show('roles');
+  else armadaGoPublicLanding();
 }
 function migrateAdmins(){
   state.admins=(state.admins||[]).map(normalizeAdmin).filter(Boolean);
@@ -418,6 +463,7 @@ function markSuperPinChangedByUser(){
 }
 function mergeAdminAuthFromRemote(p, opts){
   const remoteWinsAuth=!!(opts&&opts.remoteWinsAuth);
+  const hasApiBase=typeof API_BASE==='string'&&!!API_BASE;
   const remoteAdmins=(Array.isArray(p.admins)?p.admins:[]).map(normalizeAdmin).filter(Boolean)
     .filter(a=>!RETIRED_ADMIN_IDS.has(a.id) && !RETIRED_ADMIN_NAMES.has((a.name||'').trim().toLowerCase()));
   if(remoteAdmins.length){
@@ -440,7 +486,14 @@ function mergeAdminAuthFromRemote(p, opts){
     localById.forEach((loc,id)=>{
       if(!merged.some(a=>a.id===id)) merged.push(loc);
     });
-    state.admins=merged;
+    state.admins=hasApiBase
+      ? merged.map(a=>{
+          if(!a||typeof a!=='object') return a;
+          const o=Object.assign({}, a);
+          delete o.pin;
+          return o;
+        })
+      : merged;
   }
   const byId=new Map();
   (state.adminLogins||[]).forEach(e=>{ if(e&&e.id) byId.set(e.id,e); });

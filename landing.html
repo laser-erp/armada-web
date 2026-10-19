@@ -3,84 +3,177 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-  <title>АРМАДА — учёт перевозок для логиста, перевозчика и заказчика</title>
-  <meta name="description" content="Выберите свою роль: кабинет логиста, парк перевозчика или портал заказчика. Заявки, биржа, водитель в дороге — без Excel." />
-  <meta name="theme-color" content="#1e5aa8" />
+  <title>Сервис учёта грузоперевозок для перевозчиков и логистов — АРМАДА</title>
+  <meta name="description" content="Сервис учёта грузоперевозок для перевозчиков и логистов" />
+  <meta name="theme-color" content="#04050A" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/landing.css?v=2026-08-31-land4317" />
-  <style>
-    .hub-hero{text-align:center;padding:40px 0 28px}
-    .hub-hero h1{font-size:clamp(1.6rem,4vw,2.2rem);margin:0 0 12px;font-weight:800}
-    .hub-hero p{margin:0 auto 28px;max-width:32em;color:var(--muted);font-size:1.05rem}
-    .hub-grid{display:grid;gap:16px}
-    @media(min-width:640px){.hub-grid{grid-template-columns:repeat(3,1fr)}}
-    .hub-card{
-      display:flex;flex-direction:column;background:#fff;border-radius:var(--radius);
-      padding:22px 20px;border:2px solid var(--line);text-decoration:none;color:inherit;
-      box-shadow:var(--shadow);transition:border-color .15s,transform .15s;
-    }
-    .hub-card:hover{border-color:var(--accent);transform:translateY(-2px)}
-    .hub-card--logist{--accent:#1e5aa8}
-    .hub-card--carrier{--accent:#dc2626}
-    .hub-card--customer{--accent:#0f766e}
-    .hub-card-badge{
-      font-size:.72rem;font-weight:700;text-transform:uppercase;letter-spacing:.05em;
-      color:var(--accent);margin-bottom:10px;
-    }
-    .hub-card h2{margin:0 0 8px;font-size:1.15rem}
-    .hub-card p{margin:0 0 16px;font-size:.9rem;color:var(--muted);flex:1}
-    .hub-card-cta{
-      font-weight:700;color:var(--accent);font-size:.92rem;
-    }
-    .hub-login{margin-top:32px;text-align:center}
-    .hub-login p{color:var(--muted);font-size:.9rem;margin:0 0 12px}
-    .hub-login-links{display:flex;flex-wrap:wrap;gap:10px;justify-content:center}
-  </style>
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Unbounded:wght@700;900&family=Onest:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/brand/armada-wordmark.css?v=2026-10-18-splash" />
+  <link rel="stylesheet" href="/landing-night.css?v=2026-10-17-night6" />
+  <script src="/landing-copy.js?v=2026-10-17-night6"></script>
 </head>
-<body class="landing landing--logist">
-  <main class="landing-wrap">
-    <section class="hub-hero">
-      <img src="/logo.png" alt="АРМАДА" width="80" height="80" style="margin-bottom:12px" />
-      <h1>Учёт перевозок — каждому своя выгода</h1>
-      <p>Заявки, парк, биржа и портал заказчика в одной сети. Выберите, кто вы — и посмотрите, что получите.</p>
-    </section>
-
-    <div class="hub-grid">
-      <a class="hub-card hub-card--logist" href="/kp-logist.html">
-        <span class="hub-card-badge">Логист / диспетчер</span>
-        <h2>Кабинет /a</h2>
-        <p>Все заявки в одном месте. Свой парк, биржа партнёрам, документы и портал для клиентов — без Excel и WhatsApp.</p>
-        <span class="hub-card-cta">Смотреть для логиста →</span>
+<body class="landing landing--night-highway">
+  <section class="hero" id="hero">
+    <canvas id="c" aria-hidden="true"></canvas>
+    <div class="vign"></div>
+    <header class="top">
+      <a class="logo armada-wordmark armada-wordmark--on-dark" href="/landing.html">
+        <span class="armada-wordmark-icon" aria-hidden="true"><img src="/brand/armada-mark.svg" alt="" width="22" height="22" decoding="async" /></span>
+        <span class="armada-wordmark-name">АРМАДА</span>
       </a>
-      <a class="hub-card hub-card--carrier" href="/kp.html">
-        <span class="hub-card-badge">Перевозчик</span>
-        <h2>Парк и биржа</h2>
-        <p>Заказы от логистов без обзвона. Забираете заявку кнопкой, ставка прозрачна, водитель ведёт рейс с телефона.</p>
-        <span class="hub-card-cta">Смотреть для перевозчика →</span>
-      </a>
-      <a class="hub-card hub-card--customer" href="/kp-zakaz.html">
-        <span class="hub-card-badge">Заказчик</span>
-        <h2>Портал /z</h2>
-        <p>Заявка с телефона за 2 минуты. Минимальная цена и статус рейса — без звонков диспетчеру.</p>
-        <span class="hub-card-cta">Смотреть для заказчика →</span>
-      </a>
-    </div>
-
-    <section class="hub-login">
-      <p>Уже подключены?</p>
-      <div class="hub-login-links">
-        <a class="landing-btn landing-btn-primary" href="/a/">Кабинет логиста</a>
-        <a class="landing-btn landing-btn-secondary" href="/v/">Водитель</a>
-        <a class="landing-btn landing-btn-secondary" href="/z/">Заказчик</a>
+      <nav aria-label="Разделы">
+        <a class="nav-text" href="/kp-logist.html">Логисту</a>
+        <a class="nav-text" href="/kp.html">Транспортной компании</a>
+        <a class="nav-text" href="/kp-zakaz.html">Заказчику</a>
+        <a class="nav-text" href="/kp-owner.html">Частному перевозчику</a>
+        <a class="nav-text" href="/legal.html#tariffs">Тарифы</a>
+        <a class="btn glass sm" href="/a/">Войти</a>
+      </nav>
+    </header>
+    <div class="hero-first">
+      <div class="copy">
+        <span class="kick"><em aria-hidden="true"></em>Сервис учёта грузоперевозок для перевозчиков и логистов</span>
+        <h1>
+          <span class="w" style="animation-delay:.35s">Грузоперевозки</span><br />
+          <span class="w" style="animation-delay:.55s">без</span>
+          <span class="w r" style="animation-delay:.75s">рутины</span>
+        </h1>
+        <p class="lead">
+          Заявки, рейсы, водители и документы — в одной системе. Заказчик оставляет заявку сам, водитель ведёт рейс с телефона, акт и счёт собираются из данных рейса.
+        </p>
+        <ul class="perks" aria-label="Выгоды">
+          <li class="perk">
+            <span class="perk-ico" aria-hidden="true">
+              <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M4 6h16M4 12h10M4 18h14" />
+              </svg>
+            </span>
+            <span class="perk-body"><b>Заявки без звонков</b><span>заказчик оставляет сам</span></span>
+          </li>
+          <li class="perk">
+            <span class="perk-ico" aria-hidden="true">
+              <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M12 3v3M5.5 8.5l2 2M18.5 8.5l-2 2M12 21v-3M7 14a5 5 0 0 1 10 0" />
+              </svg>
+            </span>
+            <span class="perk-body"><b>Рейс с телефона водителя</b><span>ЕТО, километры, статусы</span></span>
+          </li>
+          <li class="perk">
+            <span class="perk-ico" aria-hidden="true">
+              <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M7 3h7l5 5v13H7zM14 3v6h6" />
+              </svg>
+            </span>
+            <span class="perk-body"><b>Документы из рейса</b><span>договор-заявка, акт, счёт</span></span>
+          </li>
+          <li class="perk">
+            <span class="perk-ico" aria-hidden="true">
+              <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M12 8v4l3 2M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0z" />
+              </svg>
+            </span>
+            <span class="perk-body"><b>Прибыль по каждой машине и биржа для лишних заказов</b></span>
+          </li>
+        </ul>
+        <div class="cta cta--dual">
+          <a class="btn red cta-btn" href="/pilot.html">Попробовать бесплатно 30 дней</a>
+          <a class="btn glass cta-btn" href="#pilot" data-pilot-open>Участвовать в пилотном проекте</a>
+        </div>
       </div>
-    </section>
-  </main>
-
-  <footer class="landing-wrap landing-footer">
-    <p><a href="/help.html">Помощь</a> · <a href="/legal.html">Оферта</a> · <a href="/plan-seti.html">План сети</a></p>
-    <p><a href="mailto:hello@armada.sx">hello@armada.sx</a> · <a href="mailto:support@armada.sx">support@armada.sx</a></p>
-    <p>АРМАДА · app.armada.sx</p>
-  </footer>
+    </div>
+  </section>
+  <section class="below">
+    <nav class="roles roles--below" aria-label="Роли">
+      <h2 class="roles-title">Кому подходит АРМАДА</h2>
+      <div class="roles-grid">
+        <a class="role" href="/kp-logist.html">
+          <small>Логист</small>
+          <b>Заявки и биржа</b>
+          <span>Заявки, парк и биржа партнёрам — без Excel и обзвона.</span>
+        </a>
+        <a class="role" href="/kp.html">
+          <small>Транспортная компания</small>
+          <b>Парк и заказы</b>
+          <span>Свой парк и заказы от логистов — ставка в цифрах, рейсы с телефона водителей.</span>
+        </a>
+        <a class="role" href="/kp-zakaz.html">
+          <small>Заказчик</small>
+          <b>Заявка с телефона</b>
+          <span>Цена и статус сразу — без звонков.</span>
+        </a>
+        <a class="role" href="/kp-owner.html">
+          <small>Частный перевозчик</small>
+          <b>Своя машина</b>
+          <span>Рейсы, ЕТО и документы — кабинет собственника-водителя в телефоне.</span>
+        </a>
+      </div>
+    </nav>
+    <div class="login">
+      <b style="font-size:19px">Уже подключены — войти</b>
+      <div class="row">
+        <a class="main" href="/a/">Логист</a>
+        <a href="/o/">Частный перевозчик</a>
+        <a href="/v/">Водитель</a>
+        <a href="/z/">Заказчик</a>
+      </div>
+    </div>
+    <footer>
+      <span>© АРМАДА · учёт перевозок</span>
+      <span>
+        <a href="/help.html">Помощь</a>
+        <a href="/legal.html">Оферта</a>
+        <a href="/legal.html#privacy">Правовая информация</a>
+        <a href="mailto:support@armada.sx">support@armada.sx</a>
+      </span>
+    </footer>
+  </section>
+  <div class="pilot-modal" id="pilot" role="dialog" aria-modal="true" aria-labelledby="pilot-project-title" hidden>
+    <button type="button" class="pilot-modal-backdrop" data-pilot-close aria-label="Закрыть окно пилотного проекта"></button>
+    <div class="pilot-modal-panel pilot-project-inner">
+      <button type="button" class="pilot-modal-close" data-pilot-close aria-label="Закрыть">
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+          <path d="M6 6l12 12M18 6L6 18" />
+        </svg>
+      </button>
+      <h2 id="pilot-project-title">Сделаем сервис под ваши задачи</h2>
+      <ul class="pilot-project-points">
+        <li>3 месяца бесплатно, все функции</li>
+        <li>Ваши пожелания — в первую очередь</li>
+        <li>Прямая связь с командой</li>
+        <li>Переносим заказы, машины и водителей из Excel</li>
+        <li>Продление при активном участии</li>
+      </ul>
+      <p class="pilot-project-from-you"><strong>Что от вас:</strong> Работать в АРМАДЕ и раз в неделю говорить, что неудобно.</p>
+      <form id="landing-pilot-form" class="landing-pilot-form">
+        <label>
+          Имя <span class="req">*</span>
+          <input type="text" id="landing-pilot-name" name="contactName" required autocomplete="name" placeholder="Как к вам обращаться" />
+        </label>
+        <label>
+          Телефон <span class="req">*</span>
+          <input type="tel" id="landing-pilot-phone" name="phone" required autocomplete="tel" placeholder="+7 …" />
+        </label>
+        <label>
+          Компания
+          <input type="text" id="landing-pilot-company" name="company" autocomplete="organization" placeholder="ООО «…» или ИП" />
+        </label>
+        <label>
+          Сколько машин в парке (ориентир)
+          <input type="text" id="landing-pilot-fleet" name="fleetSize" inputmode="numeric" placeholder="6" />
+        </label>
+        <label>
+          Что вам нужно в работе
+          <textarea id="landing-pilot-needs" name="workNeeds" rows="3" placeholder="Биржа, портал заказчика, отчёты…"></textarea>
+        </label>
+        <p class="landing-pilot-status" id="landing-pilot-status" hidden></p>
+        <button type="submit" class="btn red landing-pilot-submit" id="landing-pilot-submit">Отправить заявку на пилот</button>
+        <p class="landing-pilot-legal">Нажимая «Отправить», вы соглашаетесь на обработку данных для связи. <a href="/legal.html#privacy">Политика ПДн</a></p>
+      </form>
+    </div>
+  </div>
+  <script src="/landing-night-hero.js?v=2026-10-17-night6"></script>
+  <script src="/landing-pilot-modal.js?v=2026-10-17-night6"></script>
+  <script src="/landing-pilot-form.js?v=2026-10-17-night6"></script>
 </body>
 </html>

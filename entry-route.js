@@ -3,6 +3,7 @@
   var path = (location.pathname || '').toLowerCase();
   var screenId = null;
   if (/\/(a)(\/|$)/.test(path)) screenId = 'admin-pin';
+  else if (/\/(o)(\/|$)/.test(path)) screenId = 'owner-login';
   else if (/\/(v)(\/|$)/.test(path)) screenId = 'driver-login';
   else if (/\/(z)(\/|$)/.test(path)) screenId = 'customer-login';
   if (!screenId) return;

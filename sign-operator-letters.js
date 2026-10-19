@@ -145,5 +145,5 @@ function openSignOperatorLetterPrint(spaceId, templateId, bodyOverride) {
 }
 
 function canShowKonturIntegrationLetters() {
-  return typeof isSuperAdmin === 'function' && isSuperAdmin();
+  return typeof adminSuperUiActive === 'function' && adminSuperUiActive();
 }

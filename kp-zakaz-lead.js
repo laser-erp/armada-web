@@ -94,7 +94,7 @@
       if (form) form.hidden = true;
     } catch (e) {
       console.warn('customer lead', e);
-      showStatus('Не удалось отправить автоматически. Напишите на hello@armada.sx или позвоните +7 (965) 073-00-02', false);
+      showStatus('Не удалось отправить автоматически. Напишите на hello@armada.sx или позвоните +7 (999) 000-00-00', false);
     } finally {
       if (btn) btn.disabled = false;
     }

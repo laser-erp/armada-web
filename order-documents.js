@@ -1230,6 +1230,10 @@ function syncOrderDocsOnAssign(o){
     if(cur.status==='draft'){
       cur.status='ready';
       if(!cur.updatedAt) cur.updatedAt=now;
+      if(kind==='transportApp'&&o.transportApp&&!o.transportApp.signedAt){
+        o.transportApp.signedAt=now;
+        cur.status='signed';
+      }
     }else if(cur.status==='ready'&&!cur.updatedAt){
       cur.updatedAt=now;
     }
@@ -1444,7 +1448,7 @@ function openCustomerOrderDocument(orderId, kind){
   }
   if(kind==='framework'){
     const co=findCompanyById(o.customerId);
-    const carrier=findCompanyById(o.ownCompanyId)||carrierOwnCompanyForSpace(o.spaceId);
+    const carrier=findCompanyById(o.ownCompanyId)||(typeof carrierOwnCompanyForSpace==='function'?carrierOwnCompanyForSpace(o.spaceId):null);
     if(co) openFrameworkContractPrint(co, carrier);
     return;
   }

@@ -149,6 +149,19 @@ function billingCanWrite(spaceId){
 }
 
 function billingCanUseExchange(spaceId){
+  const sp=typeof findSpaceById==='function'?findSpaceById(spaceId):null;
+  if(sp&&typeof isOwnerDriverProductSpace==='function'&&isOwnerDriverProductSpace(sp)){
+    if(typeof spaceModuleEnabled==='function'&&!spaceModuleEnabled(sp,'exchange')){
+      return {ok:false, message:'Биржа доступна на тарифе «Средний». Чтобы сменить тариф, обратитесь к администратору.'};
+    }
+    if(typeof ownerSubscriptionStatusForSpace==='function'){
+      const sub=ownerSubscriptionStatusForSpace(sp);
+      if(sub.phase==='expired'){
+        return {ok:false, message:'Подписка закончилась. Обратитесь к администратору для продления.'};
+      }
+    }
+    return {ok:true};
+  }
   const b=getBillingForSpace(spaceId);
   const st=resolveBillingStatus(spaceId);
   if(st==='readonly' || st==='suspended') return {ok:false, message:'Биржа отключена — оплатите подписку или продлите пилот.'};
@@ -181,6 +194,9 @@ function billingCanUseEtrn(spaceId){
 }
 
 function billingGuard(spaceId, action){
+  if(action==='create_order'&&!spaceId){
+    return {ok:false, message:'Не указан кабинет перевозчика — заявку с портала создать нельзя.'};
+  }
   const writeActions=new Set(['create_order','edit_order','close_order','add_driver','add_vehicle','add_admin','publish_exchange','claim_exchange','create_shift','create_etrn']);
   if(writeActions.has(action)){
     const w=billingCanWrite(spaceId);
@@ -199,11 +215,21 @@ function billingGuard(spaceId, action){
     if(!et.ok) return et;
   }
   if(action==='add_driver'){
+    const sp=typeof findSpaceById==='function'?findSpaceById(spaceId):null;
+    if(sp&&typeof ownerDriverDriverLimitGuard==='function'){
+      const og=ownerDriverDriverLimitGuard(sp);
+      if(!og.ok) return og;
+    }
     const lim=billingLimitsForSpace(spaceId);
     const use=billingUsageForSpace(spaceId);
     if(use.drivers>=lim.drivers) return {ok:false, message:`Лимит водителей (${lim.drivers}). Upgrade тарифа или add-on +${BILLING_ADDON_UNITS}.`};
   }
   if(action==='add_vehicle'){
+    const sp=typeof findSpaceById==='function'?findSpaceById(spaceId):null;
+    if(sp&&typeof ownerDriverVehicleLimitGuard==='function'){
+      const og=ownerDriverVehicleLimitGuard(sp);
+      if(!og.ok) return og;
+    }
     const lim=billingLimitsForSpace(spaceId);
     const use=billingUsageForSpace(spaceId);
     if(use.vehicles>=lim.vehicles) return {ok:false, message:`Лимит ТС (${lim.vehicles}). Upgrade тарифа или add-on +${BILLING_ADDON_UNITS}.`};
@@ -251,14 +277,17 @@ async function billingGuardCurrentAdminWithServer(action){
   return await billingGuardWithServer(sid, action);
 }
 
-function billingOrderCommissionBase(order){
+function orderCarrierPriceBase(order){
   if(!order) return 0;
-  try{
-    if(typeof clientRate==='function') return Math.max(0, +clientRate(order)||0);
-  }catch(_){}
-  if(order.rateCash!=null) return Math.max(0, +order.rateCash);
-  if(order.freight!=null) return Math.max(0, +order.freight);
+  const pfc=+(order.priceForCarrier);
+  if(pfc>0) return pfc;
+  const cp=+(order.carrierPrice);
+  if(cp>0) return cp;
   return 0;
+}
+
+function billingOrderCommissionBase(order){
+  return orderCarrierPriceBase(order);
 }
 
 function calcExchangeCommissionAmount(order, billing){

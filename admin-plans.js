@@ -1,5 +1,6 @@
 /* АРМАДА — планы разработки (только супер-админ) */
 const ADMIN_PLAN_ITEMS = [
+  { id: 'scenarios', file: '', title: 'Сценарии', short: 'Цепочки тестового мира' },
   { id: 'index', file: 'README.md', title: 'Обзор', short: 'Индекс планов' },
   { id: 'admin', file: 'ADMIN_PLAN.md', title: 'Админ', short: 'Кабинет /a' },
   { id: 'driver', file: 'DRIVER_PLAN.md', title: 'Водитель', short: 'Вход /v' },
@@ -186,6 +187,13 @@ async function loadAdminPlanContent(planId) {
   if (!body) return;
   const item = ADMIN_PLAN_ITEMS.find(p => p.id === planId) || ADMIN_PLAN_ITEMS[0];
   adminPlansActiveId = item.id;
+  if (item.id === 'scenarios') {
+    if (typeof loadAdminPlansScenariosContent === 'function') {
+      return loadAdminPlansScenariosContent();
+    }
+    body.innerHTML = '<p class="hint">Модуль сценариев не загружен.</p>';
+    return;
+  }
   body.innerHTML = '<p class="hint">Загрузка…</p>';
   try {
     const md = await fetchAdminPlanFile(item.file);
@@ -214,6 +222,7 @@ function openAdminPlans() {
   document.querySelectorAll('.admin-nav-item[data-nav]').forEach(b => {
     b.classList.toggle('on', b.dataset.nav === 'plans');
   });
+  if (adminPlansActiveId !== 'scenarios') adminPlansActiveId = 'scenarios';
   renderAdminPlans();
   show('admin-plans-screen');
 }

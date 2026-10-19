@@ -75,19 +75,15 @@ body.entry-page .auth-back{
   cursor:pointer;padding:0;margin-bottom:8px;font-weight:600;
 }
 body.entry-driver{
-  --entry-accent:#EF4444;
-  --entry-bg:linear-gradient(145deg,#0f172a 0%,#1e293b 42%,#3f1d1d 100%);
-  --entry-aside-text:#f8fafc;
-  --entry-aside-title:#fff;
-  --entry-aside-muted:#cbd5e1;
-  --entry-aside-border:rgba(255,255,255,.12);
+  --entry-accent:var(--accent,#E01F26);
+  --entry-bg:linear-gradient(160deg,#f8f8f6 0%,#fff 55%,#f3f3f1 100%);
+  --entry-aside-text:#17181B;
+  --entry-aside-title:#17181B;
+  --entry-aside-muted:#5F6168;
+  --entry-aside-border:rgba(0,0,0,.08);
 }
-body.entry-driver .entry-aside h1{color:var(--entry-aside-title,#fff)}
-body.entry-driver .entry-aside-lead{color:var(--entry-aside-muted,#cbd5e1)}
-body.entry-driver .entry-aside-list li{color:var(--entry-aside-muted,#cbd5e1)}
-body.entry-driver .entry-aside-foot{color:var(--entry-aside-muted,#cbd5e1)}
 body.entry-admin{
-  --entry-accent:#1e5aa8;
+  --entry-accent:#E01F26;
   --entry-bg:linear-gradient(160deg,#eef4fb 0%,#f9fafb 45%,#e8eef5 100%);
 }
 body.entry-customer{
@@ -178,7 +174,7 @@ body.entry-customer .entry-aside-carrier-wrap{
     margin-bottom:8px;
     padding:14px 16px;
     border-radius:12px;
-    background:rgba(15,23,42,.55);
-    border:1px solid rgba(255,255,255,.1);
+    background:rgba(255,255,255,.85);
+    border:1px solid rgba(0,0,0,.08);
   }
 }

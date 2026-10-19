@@ -4,13 +4,14 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <title>АРМАДА — помощь и инструкции</title>
-  <meta name="theme-color" content="#EF4444" />
+  <meta name="theme-color" content="#E01F26" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <link href="https://fonts.googleapis.com/css2?family=Onest:wght@400;500;600;700&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="styles.css?v=2026-08-31-help-roles4317" />
+  <link rel="stylesheet" href="brand/armada-wordmark.css?v=2026-10-18-splash" />
   <style>
-    body{background:var(--bg0);padding:16px;max-width:720px;margin:0 auto}
+    body{background:#F3F3F1;padding:16px;max-width:720px;margin:0 auto;font-family:Onest,system-ui,sans-serif}
     .help-wrap{padding-bottom:32px}
     .help-top{display:flex;align-items:center;gap:12px;margin-bottom:20px}
     .help-top img{width:48px;border-radius:10px}
@@ -28,8 +29,8 @@
     .help-section li{margin-bottom:6px}
     .help-back{display:inline-block;margin-bottom:16px;color:var(--accent);font-weight:600;text-decoration:none;font-size:.9rem}
     .help-note{
-      padding:10px 12px;border-radius:var(--radius);background:rgba(239,68,68,.08);
-      border:1px solid rgba(239,68,68,.25);font-size:.85rem;margin:12px 0
+      padding:10px 12px;border-radius:var(--radius);background:color-mix(in srgb,var(--accent) 8%,transparent);
+      border:1px solid color-mix(in srgb,var(--accent) 25%,transparent);font-size:.85rem;margin:12px 0
     }
     .help-role-pick{display:grid;gap:10px;margin:20px 0}
     .help-role-pick a{
@@ -46,7 +47,7 @@
   <a class="help-back" id="help-back" href="/">← На главную</a>
   <div class="help-wrap">
     <div class="help-top">
-      <img src="logo.png" alt="" />
+      <div class="armada-wordmark" aria-hidden="true"><span class="armada-wordmark-icon" aria-hidden="true"><img src="brand/armada-mark.svg" alt="" width="22" height="22" decoding="async" /></span><span class="armada-wordmark-name">АРМАДА</span></div>
       <div>
         <h1 id="help-title">Помощь и инструкции</h1>
         <p class="hint" id="help-lead" style="margin:0">АРМАДА — учёт перевозок</p>
@@ -211,6 +212,8 @@
   <footer style="max-width:720px;margin:16px auto;padding:0 16px 32px;font-size:.85rem;color:var(--muted)">
     <p><a href="mailto:support@armada.sx">support@armada.sx</a> · <a href="mailto:hello@armada.sx">hello@armada.sx</a> · <a href="/">На главную</a></p>
   </footer>
+  <script src="/armada-build.js?v=2026-10-16-theme-s2"></script>
+  <script src="/themes.js?v=2026-10-16-theme-s2"></script>
   <script src="help-boot.js"></script>
 </body>
 </html>

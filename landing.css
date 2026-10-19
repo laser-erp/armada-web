@@ -1,28 +1,30 @@
-/* АРМАДА — продающие лендинги по ролям */
+@import url('/brand/armada-wordmark.css?v=2026-10-18-splash');
+/* АРМАДА — продающие лендинги (фирменный стиль «Графит», шаг 3а) */
 :root{
-  --accent:#1e5aa8;
-  --accent-dark:#164a8c;
-  --accent-soft:#e8f1fb;
+  --accent:#E01F26;
+  --accent-dark:#B8161C;
+  --accent-soft:#FCE9EA;
   --ok:#0f766e;
   --warn:#c2410c;
-  --bg:#f0f4f8;
+  --bg:#F3F3F1;
   --surface:#fff;
-  --text:#1a2332;
-  --muted:#5c6578;
-  --line:#e2e8f0;
+  --text:#17181B;
+  --muted:#5F6168;
+  --line:#E2E2DE;
+  --menu-bg:#1E1F22;
+  --menu-text:#C9CACE;
   --shadow:0 2px 12px rgba(0,0,0,.06);
   --shadow-lg:0 16px 48px rgba(15,23,42,.12);
-  --radius:14px;
-  --radius-sm:10px;
+  --radius:10px;
+  --radius-sm:6px;
 }
-.landing--customer{--accent:#0f766e;--accent-dark:#0d5c56;--accent-soft:#ecfdf5;--bg:#f0f7f6}
-.landing--carrier{--accent:#dc2626;--accent-dark:#b91c1c;--accent-soft:#fef2f2;--bg:#faf5f5}
-.landing--logist{--accent:#1e5aa8;--accent-dark:#164a8c;--accent-soft:#e8f1fb;--bg:#f0f4f8}
+/* Роли — один акцент; классы .landing--* для разметки и плашек */
+.landing--customer,.landing--carrier,.landing--logist{}
 
 *{box-sizing:border-box}
 body.landing{
   margin:0;
-  font-family:Inter,system-ui,sans-serif;
+  font-family:Onest,system-ui,sans-serif;
   background:var(--bg);
   color:var(--text);
   line-height:1.55;
@@ -31,24 +33,29 @@ body.landing{
 
 .landing-top{
   position:sticky;top:0;z-index:50;
-  background:rgba(255,255,255,.92);
-  backdrop-filter:blur(10px);
-  border-bottom:1px solid var(--line);
+  background:var(--menu-bg);
+  border-bottom:1px solid #2E3036;
 }
 .landing-top-inner{
   max-width:960px;margin:0 auto;padding:10px 16px;
   display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;
 }
-.landing-brand{display:flex;align-items:center;gap:10px;text-decoration:none;color:var(--text);font-weight:700}
+.landing-brand{display:flex;align-items:center;gap:10px;text-decoration:none;color:#F3F3F1;font-weight:700}
 .landing-brand img{width:36px;height:auto}
 .landing-role-nav{display:flex;flex-wrap:wrap;gap:6px}
 .landing-role-nav a{
   font-size:.78rem;font-weight:600;text-decoration:none;
-  padding:6px 11px;border-radius:999px;border:1px solid var(--line);
-  color:var(--muted);background:#fff;
+  padding:8px 12px;min-height:44px;display:inline-flex;align-items:center;
+  border-radius:999px;border:1px solid #2E3036;
+  color:var(--menu-text);background:#24262B;
 }
 .landing-role-nav a.is-active{background:var(--accent-soft);color:var(--accent);border-color:transparent}
-.landing-role-nav a:hover{color:var(--accent)}
+.landing-role-nav a:hover{color:#fff}
+.landing-role-plate{
+  display:inline-block;font-size:.72rem;font-weight:700;letter-spacing:.05em;
+  text-transform:uppercase;color:var(--accent);background:var(--accent-soft);
+  padding:6px 12px;border-radius:var(--radius-sm);margin-bottom:10px;
+}
 
 .landing-wrap{max-width:960px;margin:0 auto;padding:0 16px 64px}
 
@@ -182,7 +189,7 @@ body.landing{
 
 .landing-btn{
   display:inline-flex;align-items:center;justify-content:center;
-  padding:14px 22px;border-radius:var(--radius-sm);font-weight:700;
+  min-height:44px;padding:12px 22px;border-radius:var(--radius-sm);font-weight:700;
   text-decoration:none;font-size:1rem;border:2px solid transparent;
   cursor:pointer;text-align:center;
 }
@@ -192,10 +199,16 @@ body.landing{
 .landing-btn-ghost{background:transparent;color:var(--accent);border-color:var(--line)}
 
 .landing-footer{
-  margin-top:32px;padding-top:20px;border-top:1px solid var(--line);
-  text-align:center;font-size:.8rem;color:var(--muted);
+  margin-top:32px;padding:24px 16px 32px;
+  background:var(--menu-bg);color:var(--menu-text);
+  text-align:center;font-size:.8rem;
 }
-.landing-footer a{color:var(--accent);font-weight:600}
+.landing-footer a{color:#F3F3F1;font-weight:600}
+.landing-footer--inset{
+  margin-top:32px;padding-top:20px;border-top:1px solid var(--line);
+  background:transparent;color:var(--muted);
+}
+.landing-footer--inset a{color:var(--accent)}
 .landing-footer p{margin:6px 0}
 
 .landing-compare{width:100%;border-collapse:collapse;font-size:.88rem}

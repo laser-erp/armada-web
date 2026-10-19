@@ -182,34 +182,42 @@ function renderAdminProfile() {
     ? 'Вход: телефон + PIN.'
     : 'Вход: ИНН организации + PIN.';
   const incomplete = adminSelfProfileIncomplete(adm);
-  host.innerHTML = `<section class="admin-profile-card">
-    ${incomplete ? '<div class="admin-profile-alert" id="adm-profile-alert">Заполните ФИО и телефон — для связи, документов и входа по телефону (если включит администратор).</div>' : ''}
-    <h2 class="form-section-title">Мои данные</h2>
-    <p class="cat-panel-hint">Личные данные ${typeof isSuperAdmin==='function'&&isSuperAdmin()?'администратора':'логиста'} — не путать с «Профилем компании» в Справочниках (ИНН, банк, парк).</p>
-    <div class="admin-profile-fields">
-      <label>ФИО</label>
-      <input id="adm-profile-name" type="text" autocomplete="name" placeholder="Иванов Иван Иванович" value="${esc(adm.name || '')}" />
-      <label>Телефон</label>
-      <input id="adm-profile-phone" type="tel" inputmode="tel" autocomplete="tel" placeholder="+7 965 073-00-02" value="${esc(phone)}" />
-      <p class="hint">${esc(loginHint)} Способ входа меняет супер-админ в «Активность».</p>
-      <button type="button" class="primary" id="adm-profile-save">Сохранить</button>
-      <div class="toast-ok" id="adm-profile-ok" style="display:none"></div>
-      <div class="hint err" id="adm-profile-err" style="display:none"></div>
-    </div>
-    ${typeof epdKonturConnectCardHtml==='function'?epdKonturConnectCardHtml():''}
-    <h2 class="form-section-title" style="margin-top:20px">Печать и подпись</h2>
-    <p class="cat-panel-hint">Подставляются при печати писем и документов от вашего имени. PNG или JPG, до ${ADMIN_DOC_IMAGE_MAX_KB} КБ каждый файл.</p>
-    ${typeof epdSignCardHtml==='function'?epdSignCardHtml('carrier', { extra:'<p class="hint">ПЭП водителя (T3/T4) — в приложении «Водитель» → Профиль.</p>' }):''}
-    <div class="admin-profile-grid">
-      ${docPhotoUploadRow('Печать организации', stamp, 'id="adm-profile-stamp"', 'id="adm-profile-stamp-clear"')}
-      ${docPhotoUploadRow('Подпись', signature, 'id="adm-profile-signature"', 'id="adm-profile-signature-clear"')}
-    </div>
-    <p class="hint"><strong>Печать</strong> — бланк с пустым местом для подписи в оригинале. <strong>PDF</strong> — готовый документ с печатью и подписью (как на скане). Файлы ниже используются для PDF.</p>
-    <div class="admin-profile-preview">
-      <p class="meta">Как будет выглядеть в PDF</p>
-      <div class="admin-profile-sample">${adminDocSignMarksHtml(adminDocAssets(currentAdmin.id, { platformStamp: true, platformSignature: true }), { scan: true })}</div>
-    </div>
-  </section>`;
+  const roleWord = typeof isSuperAdmin === 'function' && isSuperAdmin() ? 'администратора' : 'логиста';
+  const konturHtml = typeof epdKonturConnectCardHtml === 'function' ? epdKonturConnectCardHtml() : '';
+  const epdSignHtml = typeof epdSignCardHtml === 'function'
+    ? epdSignCardHtml('carrier', { extra: '<p class="hint">ПЭП водителя (T3/T4) — в приложении «Водитель» → Профиль.</p>' })
+    : '';
+  host.innerHTML = `
+    <section class="adm-profile-section adm-profile-section--data admin-profile-card">
+      ${incomplete ? '<div class="admin-profile-alert" id="adm-profile-alert">Заполните ФИО и телефон — для связи, документов и входа по телефону (если включит администратор).</div>' : ''}
+      <h2 class="adm-profile-subtitle form-section-title">Мои данные</h2>
+      <p class="cat-panel-hint adm-profile-section-hint">Личные данные ${roleWord} — не путать с «Профилем компании» в Справочниках (ИНН, банк, парк).</p>
+      <div class="admin-profile-fields">
+        <label for="adm-profile-name">ФИО</label>
+        <input id="adm-profile-name" type="text" autocomplete="name" placeholder="Иванов Иван Иванович" value="${esc(adm.name || '')}" />
+        <label for="adm-profile-phone">Телефон</label>
+        <input id="adm-profile-phone" type="tel" inputmode="tel" autocomplete="tel" placeholder="+7 999 000-00-00" value="${esc(phone)}" />
+        <p class="hint">${esc(loginHint)} Способ входа меняет супер-админ в «Активность».</p>
+        <button type="button" class="primary" id="adm-profile-save">Сохранить</button>
+        <div class="toast-ok" id="adm-profile-ok" style="display:none"></div>
+        <div class="hint err" id="adm-profile-err" style="display:none"></div>
+      </div>
+    </section>
+    ${konturHtml ? `<div class="adm-profile-section adm-profile-section--kontur">${konturHtml}</div>` : ''}
+    <section class="adm-profile-section adm-profile-section--sign admin-profile-card">
+      <h2 class="adm-profile-subtitle form-section-title">Печать и подпись</h2>
+      <p class="cat-panel-hint adm-profile-section-hint">Подставляются при печати писем и документов от вашего имени. PNG или JPG, до ${ADMIN_DOC_IMAGE_MAX_KB} КБ каждый файл.</p>
+      ${epdSignHtml}
+      <div class="admin-profile-grid">
+        ${docPhotoUploadRow('Печать организации', stamp, 'id="adm-profile-stamp"', 'id="adm-profile-stamp-clear"')}
+        ${docPhotoUploadRow('Подпись', signature, 'id="adm-profile-signature"', 'id="adm-profile-signature-clear"')}
+      </div>
+      <p class="hint"><strong>Печать</strong> — бланк с пустым местом для подписи в оригинале. <strong>PDF</strong> — готовый документ с печатью и подписью (как на скане). Файлы ниже используются для PDF.</p>
+      <div class="admin-profile-preview">
+        <p class="meta">Как будет выглядеть в PDF</p>
+        <div class="admin-profile-sample">${adminDocSignMarksHtml(adminDocAssets(currentAdmin.id, { platformStamp: true, platformSignature: true }), { scan: true })}</div>
+      </div>
+    </section>`;
 
   const saveBtn = $('adm-profile-save');
   if (saveBtn) {
@@ -257,6 +265,10 @@ function renderAdminProfile() {
   if (typeof wireEpdKonturConnect === 'function') wireEpdKonturConnect(host);
 }
 
+function __armadaOpenAdminProfileForQa() {
+  if (typeof openAdminProfile === 'function') openAdminProfile();
+}
+
 function openAdminProfile() {
   if (!currentAdmin) {
     if (typeof fillAdminLoginSelect === 'function') fillAdminLoginSelect();
@@ -289,3 +301,5 @@ function openAdminProfile() {
     }).catch(()=>paintProfile());
   } else paintProfile();
 }
+
+if (typeof window !== 'undefined') window.__armadaOpenAdminProfile = __armadaOpenAdminProfileForQa;

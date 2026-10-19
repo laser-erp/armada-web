@@ -49,8 +49,68 @@ const baseState = { platform: null, companies: [] };
   const sp = { id: 'sp2', productTariffId: 'owner_medium' };
   const m = s.resolveSpaceModules(sp);
   assert.equal(m.fuel, true);
+  assert.equal(m.exchange, true);
+  assert.equal(m.branding, false);
   assert.equal(m.counterparties, false);
   assert.equal(s.resolveMaxVehiclesForSpace(sp), 3);
+}
+
+{
+  const s = runWithState({ ...baseState });
+  const sp = { id: 'sp3', productTariffId: 'owner_max' };
+  const m = s.resolveSpaceModules(sp);
+  assert.equal(m.branding, true);
+}
+
+// owner_basic — без биржи
+{
+  const s = runWithState({ ...baseState });
+  const m = s.resolveSpaceModules({ productTariffId: 'owner_basic' });
+  assert.equal(m.exchange, false);
+}
+
+// старый каталог в state (без exchange в features) → Средний с биржей
+{
+  const legacy = {
+    version: 1,
+    features: [
+      { key: 'orders_earnings', roles: ['owner_driver'] },
+      { key: 'fuel', roles: ['owner_driver'] },
+      { key: 'docs', roles: ['owner_driver'] },
+    ],
+    tariffs: [
+      {
+        id: 'owner_basic',
+        role: 'owner_driver',
+        modules: ['orders_earnings'],
+        maxVehicles: 1,
+      },
+      {
+        id: 'owner_medium',
+        role: 'owner_driver',
+        modules: ['orders_earnings', 'fuel', 'docs'],
+        maxVehicles: 3,
+      },
+    ],
+  };
+  const st = { ...baseState, platform: { entitlements: legacy } };
+  const s = runWithState(st);
+  const med = s.resolveSpaceModules({ productTariffId: 'owner_medium' });
+  const basic = s.resolveSpaceModules({ productTariffId: 'owner_basic' });
+  assert.equal(med.exchange, true);
+  assert.equal(basic.exchange, false);
+}
+
+{
+  const st = {
+    ...baseState,
+    vehicles: [{ id: 'v1', spaceId: 'sp-o' }],
+  };
+  const s = runWithState(st);
+  const ownerSp = { id: 'sp-o', cabinetKind: 'owner_driver', productTariffId: 'owner_basic' };
+  const lim = s.ownerDriverVehicleLimitGuard(ownerSp);
+  assert.equal(lim.ok, false);
+  assert.match(lim.message, /смените тариф/i);
 }
 
 // owner_max
@@ -80,6 +140,22 @@ const baseState = { platform: null, companies: [] };
   const m = s.resolveSpaceModules(sp);
   assert.equal(m.fuel, false);
   assert.equal(m.docs, true);
+}
+
+// ownerPaidUntil / pilot fallback
+{
+  const s = runWithState({ ...baseState });
+  const sp = {
+    id: 'sp-own',
+    cabinetKind: 'owner_driver',
+    ownerPilotEndsAt: '2030-01-15T00:00:00.000Z',
+  };
+  assert.equal(s.ownerPaidUntilIsoFromSpace(sp), '2030-01-15T00:00:00.000Z');
+  const st = s.ownerSubscriptionStatusForSpace(sp, Date.parse('2029-12-01T00:00:00.000Z'));
+  assert.equal(st.phase, 'active');
+  s.extendOwnerPaidUntilOnSpace(sp, 30);
+  assert.ok(sp.ownerPaidUntil);
+  assert.equal(sp.ownerPaidUntil, sp.ownerPilotEndsAt);
 }
 
 console.log('space-entitlements.test.mjs: ok');

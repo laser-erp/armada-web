@@ -1,6 +1,6 @@
 /* АРМАДА PWA — HTML network-first + offline fallback; кэш привязан к APP_BUILD (?v= в URL sw.js) */
 /** Ревизия оболочки SW (поднимать при деплое вместе с APP_BUILD). */
-const SW_SHELL_REV = 'v108';
+const SW_SHELL_REV = 'v126';
 const SW_BUILD = (() => {
   try {
     return new URL(self.location.href).searchParams.get('v') || 'dev';
@@ -53,12 +53,22 @@ function cachePut(req, res) {
 const SHELL = [
   './',
   './index.html',
+  './landing.html',
   './order.html',
   './landing.css',
+  './landing-night.css',
+  './landing-night-kp.css',
+  './landing-night-hero.js',
+  './landing-copy.js',
+  './guest-landing-redirect.js',
+  './landing-pilot-form.js',
+  './landing-pilot-modal.js',
   './manifest.webmanifest',
   './icons/icon-192.png',
   './icons/icon-512.png',
   './logo.png',
+  './brand/armada-mark.svg',
+  './brand/armada-wordmark.css',
   './space-modules.js',
   './owner-driver.js',
   './admin-entitlements.js',

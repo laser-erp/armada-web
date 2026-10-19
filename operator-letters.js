@@ -36,7 +36,7 @@ const ARMADA_PLATFORM_PARTY = {
   inn: '7802655283',
   kpp: '781001001',
   ogrn: '1187847037608',
-  phone: '+7 (965) 073-00-02',
+  phone: '+7 (999) 000-00-00',
   email: typeof armadaMail === 'function' ? armadaMail('hello') : 'hello@armada.sx',
   site: 'https://app.armada.sx',
   director: 'генеральный директор Наволоцкий Евгений Николаевич',
@@ -303,7 +303,7 @@ function platformArmadaLetterheadHtml() {
     p.ogrn ? `ОГРН ${esc(p.ogrn)}` : ''
   ].filter(Boolean).join(' · ');
   return `<header class="adm-letterhead adm-letterhead--platform">
-    <img class="adm-letterhead__logo" src="/logo.png" alt="" width="68" height="68" />
+    <span class="adm-letterhead__logo armada-wordmark-icon" style="width:52px;height:52px;border-radius:12px"><img src="/brand/armada-mark.svg" alt="" width="28" height="28" /></span>
     <div class="adm-letterhead__brand">
       <p class="adm-letterhead__name">${esc(p.brand)}</p>
       <p class="adm-letterhead__req">${req}</p>
@@ -333,7 +333,7 @@ function renderOperatorLetterPreviewHtml(templateId, body, opts) {
 function platformLetterheadPrintHtml() {
   const p = ARMADA_PLATFORM_PARTY;
   const origin = typeof location !== 'undefined' && location.origin ? location.origin : '';
-  const logo = origin ? `${origin}/logo.png` : '/logo.png';
+  const logo = origin ? `${origin}/brand/armada-mark.svg` : '/brand/armada-mark.svg';
   return `<header class="letterhead">
     <img class="letterhead__logo" src="${logo}" alt="АРМАДА" width="68" height="68" />
     <div class="letterhead__brand">

@@ -25,6 +25,30 @@ function adminDocsSpaceId() {
   return typeof currentSpaceId === 'function' ? currentSpaceId() : null;
 }
 
+function adminDocsCardTop(mainHtml, actionsHtml) {
+  return `<article class="adm-doc-card">
+    <div class="adm-doc-card-top">
+      <div class="adm-doc-card-main">${mainHtml}</div>
+      <div class="adm-doc-actions adm-doc-actions--compact">${actionsHtml}</div>
+    </div>
+  </article>`;
+}
+
+function adminDocsEmptyBlock(title, hint) {
+  return `<div class="adm-docs-empty">
+    <p class="adm-docs-empty-title">${esc(title)}</p>
+    <p class="hint adm-docs-empty-hint">${hint}</p>
+  </div>`;
+}
+
+function adminDocsSection(title, hint, bodyHtml) {
+  return `<section class="adm-docs-section">
+    <h3 class="adm-docs-subtitle">${esc(title)}</h3>
+    ${hint ? `<p class="cat-panel-hint adm-docs-section-hint">${hint}</p>` : ''}
+    ${bodyHtml}
+  </section>`;
+}
+
 function adminDocsLetterheadHtml(co, sp) {
   if (typeof clientLetterheadHtml === 'function') return clientLetterheadHtml(co, sp);
   const p = typeof resolveParty === 'function'
@@ -61,30 +85,23 @@ function openAdminLetterBlank() {
 function adminDocsLegalPanelHtml() {
   const cards = ADMIN_LEGAL_DOCS.map(d => {
     const pdfHidden=d.htmlOnly||(ADMIN_LEGAL_PDF_SOON&&d.pdfSoon);
-    const pdfBtn=pdfHidden
-      ?(d.pdfSoon&&!d.htmlOnly?`<span class="hint adm-doc-pdf-soon" title="${esc(d.href)}">PDF · скоро</span>`:'')
-      :`<a class="secondary" href="${esc(d.href)}" target="_blank" rel="noopener">PDF</a>`;
     const webHref=d.htmlHref||d.href;
     const webLbl=d.htmlOnly?'Открыть':(d.htmlHref?'На сайте':'Открыть');
-    const webBtn=(d.htmlHref||d.htmlOnly||!d.pdfSoon)
-      ?`<a class="secondary" href="${esc(webHref)}" target="_blank" rel="noopener">${webLbl}</a>`
-      :'';
-    return `
-    <div class="adm-doc-card">
-      <div>
-        <span class="adm-doc-badge">${esc(d.n)}</span>
-        <h3>${esc(d.title)}</h3>
-        <p class="meta">${esc(d.meta)}</p>
-      </div>
-      <div class="adm-doc-actions">
-        ${pdfBtn}
-        ${webBtn}
-      </div>
-    </div>`;
+    const pdfQuiet = pdfHidden
+      ? (d.pdfSoon && !d.htmlOnly ? `<span class="adm-doc-quiet">PDF · скоро</span>` : '')
+      : `<a class="linkish adm-doc-quiet" href="${esc(d.href)}" target="_blank" rel="noopener">PDF</a>`;
+    const webPrimary = (d.htmlHref || d.htmlOnly || !d.pdfSoon)
+      ? `<a class="primary adm-doc-primary" href="${esc(webHref)}" target="_blank" rel="noopener">${webLbl}</a>`
+      : '';
+    const actions = `${webPrimary || pdfQuiet}${webPrimary && pdfQuiet ? pdfQuiet : ''}`;
+    const main = `<span class="adm-doc-badge">${esc(d.n)}</span><h3>${esc(d.title)}</h3><p class="meta">${esc(d.meta)}</p>`;
+    return adminDocsCardTop(main, actions || pdfQuiet);
   }).join('');
-  return `<p class="cat-panel-hint">SaaS — оферта и ПДн платформы. Заявка на <strong>перевозку</strong> — <a href="legal-transport.html" target="_blank" rel="noopener">legal-transport.html</a> (отдельно от SaaS). PDF из каталога <code>legal-pdf/</code> появятся после юриста — кнопки «PDF · скоро».</p>
-    <p class="hint"><a href="legal.html" target="_blank" rel="noopener">legal.html</a> · <a href="legal-transport.html" target="_blank" rel="noopener">legal-transport.html</a></p>
-    ${cards}`;
+  return `<div class="adm-docs-panel-intro">
+    <p class="cat-panel-hint">SaaS — оферта и ПДн платформы. Заявка на <strong>перевозку</strong> — <a href="legal-transport.html" target="_blank" rel="noopener">legal-transport.html</a> (отдельно от SaaS).</p>
+    <p class="hint adm-docs-quick-links"><a href="legal.html" target="_blank" rel="noopener">legal.html</a> · <a href="legal-transport.html" target="_blank" rel="noopener">legal-transport.html</a></p>
+  </div>
+    <div class="adm-docs-card-grid adm-docs-legal-grid">${cards}</div>`;
 }
 
 function adminDocsBuhToolbarHtml() {
@@ -98,7 +115,7 @@ function adminDocsBuhToolbarHtml() {
       ${spaces.map(s => `<option value="${esc(s.id)}"${firmFilter === s.id ? ' selected' : ''}>${esc(s.name || s.id)}</option>`).join('')}
     </select>`;
   }
-  return `<div class="adm-docs-toolbar">
+  return `<div class="adm-docs-toolbar adm-docs-filter-bar">
     ${firmOpts}
     <select id="adm-docs-role" aria-label="Роль в сделке">
       <option value="all"${adminDocsRoleFilter === 'all' ? ' selected' : ''}>Все роли</option>
@@ -117,11 +134,11 @@ function adminDocsOrderGroupHtml(o, viewSpaceId) {
   const lines = items.map(it => {
     const st = typeof customerOrderDocStatus === 'function' ? customerOrderDocStatus(it.id, o) : { label: '—', cls: 'draft', available: false };
     const openBtn = st.available
-      ? `<button type="button" class="secondary adm-doc-open" data-order-id="${esc(o.id)}" data-doc-kind="${esc(it.id)}">Открыть</button>`
-      : `<span class="hint">${esc(st.label)}</span>`;
+      ? `<button type="button" class="primary adm-doc-open" data-order-id="${esc(o.id)}" data-doc-kind="${esc(it.id)}">Открыть</button>`
+      : `<span class="adm-doc-line-wait hint">${esc(st.label)}</span>`;
     return `<div class="adm-order-doc-line">
-      <span>${esc(it.title)} · <span class="doc-status ${esc(st.cls)}">${esc(st.label)}</span></span>
-      <span>${openBtn}</span>
+      <span class="adm-order-doc-line-title">${esc(it.title)} · <span class="doc-status ${esc(st.cls)}">${esc(st.label)}</span></span>
+      <span class="adm-order-doc-line-act">${openBtn}</span>
     </div>`;
   }).join('');
   const readyCount = items.filter(it => {
@@ -131,15 +148,15 @@ function adminDocsOrderGroupHtml(o, viewSpaceId) {
   const packBtn = readyCount
     ? `<button type="button" class="primary adm-doc-pack" data-order-id="${esc(o.id)}">Скачать всё (${readyCount})</button>`
     : '';
-  return `<div class="adm-order-group">
+  return `<article class="adm-order-group adm-order-group-card">
     <div class="adm-order-group-head">
-      <h4>№${esc(o.sequentialNumber)} · ${esc(o.customer || '—')} · ${esc(when || '—')}</h4>
+      <h4 class="adm-order-group-title">№${esc(o.sequentialNumber)} · ${esc(o.customer || '—')}</h4>
       ${roleLbl ? `<span class="adm-doc-role-tag">${esc(roleLbl)}</span>` : ''}
     </div>
-    <p class="meta">${esc(routeText(o) || '—')}${o.ownCompanyName ? ` · ${esc(o.ownCompanyName)}` : ''}</p>
-    ${lines}
-    <div class="adm-order-pack-row">${packBtn}</div>
-  </div>`;
+    <p class="meta adm-order-group-meta">${esc(when || '—')} · ${esc(routeText(o) || '—')}${o.ownCompanyName ? ` · ${esc(o.ownCompanyName)}` : ''}</p>
+    <div class="adm-order-doc-lines">${lines}</div>
+    ${packBtn ? `<div class="adm-order-pack-row">${packBtn}</div>` : ''}
+  </article>`;
 }
 
 function adminDocsBuhPanelHtml() {
@@ -162,12 +179,15 @@ function adminDocsBuhPanelHtml() {
       ? `<p class="hint">Фирма: ${esc((findSpaceById(firmFilter) || {}).name || firmFilter)}</p>`
       : `<p class="hint">Только документы вашей фирмы${sid ? '' : ' (нет space у учётки)'}</p>`;
   const list = orders.length
-    ? orders.slice(0, 40).map(o => adminDocsOrderGroupHtml(o, viewSpaceId)).join('')
-    : '<div class="empty">Нет заявок по выбранным фильтрам</div>';
-  const more = orders.length > 40 ? `<p class="hint">Показаны последние 40 из ${orders.length}. Уточните поиск.</p>` : '';
+    ? `<div class="adm-docs-buh-grid">${orders.slice(0, 40).map(o => adminDocsOrderGroupHtml(o, viewSpaceId)).join('')}</div>`
+    : adminDocsEmptyBlock(
+      'Нет заявок по фильтру',
+      'Создайте заказ в парке или уточните поиск: заказчик, номер заявки, роль в сделке.',
+    );
+  const more = orders.length > 40 ? `<p class="hint adm-docs-more-hint">Показаны последние 40 из ${orders.length}. Уточните поиск.</p>` : '';
   return `${adminDocsBuhToolbarHtml()}
-    ${scopeHint}
-    <p class="cat-panel-hint">Реальные счета, договоры и акты по заявкам. «Мы заказчик» — биржа и субподряд. «Мы перевозчик» — ваш парк или забор с биржи.</p>
+    <div class="adm-docs-panel-intro">${scopeHint}
+    <p class="cat-panel-hint">Счета, договоры и акты по заявкам. Фильтр «Мы заказчик» — биржа и субподряд; «Мы перевозчик» — свой парк.</p></div>
     ${list}${more}`;
 }
 
@@ -209,47 +229,48 @@ function adminDocsLettersPanelHtml() {
   const sid = adminDocsSpaceId();
   const signOps = (typeof SIGN_OPERATOR_LETTER_CATALOG !== 'undefined' ? SIGN_OPERATOR_LETTER_CATALOG : []).map(t => {
     const custom = sid && typeof hasCustomSignOperatorLetter === 'function' && hasCustomSignOperatorLetter(sid, t.id);
-    return `<div class="adm-doc-card">
-      <div>
-        <h3>${esc(t.title)}</h3>
-        <p class="meta">${esc(t.hint)}${custom ? ' · изменено' : ''}</p>
-      </div>
-      <div class="adm-doc-actions adm-doc-actions--stack">
-        <button type="button" class="secondary adm-sign-letter-edit" data-sign-letter="${esc(t.id)}">Редактировать</button>
-        <button type="button" class="primary adm-sign-letter-print" data-sign-letter="${esc(t.id)}">Печать</button>
-      </div>
-    </div>`;
+    const main = `<h3>${esc(t.title)}</h3><p class="meta">${esc(t.hint)}${custom ? ' · изменено' : ''}</p>`;
+    const actions = `<button type="button" class="primary adm-sign-letter-print" data-sign-letter="${esc(t.id)}">Печать</button>
+        <button type="button" class="linkish adm-sign-letter-edit" data-sign-letter="${esc(t.id)}">Редактировать</button>`;
+    return adminDocsCardTop(main, actions);
   }).join('');
   const konturBlock = (typeof canShowKonturIntegrationLetters === 'function' && canShowKonturIntegrationLetters())
     ? (() => {
       const ops = (typeof OPERATOR_LETTER_CATALOG !== 'undefined' ? OPERATOR_LETTER_CATALOG : []).map(t => {
         const custom = typeof hasCustomOperatorLetter === 'function' && hasCustomOperatorLetter(t.id);
         const outMeta = typeof operatorLetterOutMetaLine === 'function' ? operatorLetterOutMetaLine(t.id) : '';
-        return `<div class="adm-doc-card">
-          <div>
-            <h3>${esc(t.title)}</h3>
-            <p class="meta">${esc(t.hint)}${custom ? ' · изменено' : ''}${outMeta ? `<br>${esc(outMeta)}` : ''}</p>
-          </div>
-          <div class="adm-doc-actions adm-doc-actions--stack">
-            <button type="button" class="secondary adm-op-letter-edit" data-op-letter="${esc(t.id)}">Редактировать</button>
-            <button type="button" class="primary adm-op-letter-print" data-op-letter="${esc(t.id)}">Печать</button>
-            <button type="button" class="secondary adm-op-letter-pdf" data-op-letter="${esc(t.id)}">PDF</button>
-          </div>
-        </div>`;
+        const main = `<h3>${esc(t.title)}</h3><p class="meta">${esc(t.hint)}${custom ? ' · изменено' : ''}${outMeta ? `<br>${esc(outMeta)}` : ''}</p>`;
+        const actions = `<button type="button" class="primary adm-op-letter-print" data-op-letter="${esc(t.id)}">Печать</button>
+            <button type="button" class="linkish adm-op-letter-edit" data-op-letter="${esc(t.id)}">Редактировать</button>
+            <button type="button" class="linkish adm-op-letter-pdf" data-op-letter="${esc(t.id)}">PDF</button>`;
+        return adminDocsCardTop(main, actions);
       }).join('');
-      return `<h3 class="adm-docs-subtitle">Письма оператору Контура (платформа)</h3>
-        <p class="cat-panel-hint">Только для супер-админа: заявка на API и ключи.</p>
-        ${ops || '<div class="empty">Нет шаблонов</div>'}`;
+      const body = ops
+        ? `<div class="adm-docs-card-grid">${ops}</div>`
+        : adminDocsEmptyBlock('Нет шаблонов', 'Шаблоны писем оператору появятся в каталоге платформы.');
+      return adminDocsSection(
+        'Письма оператору Контура (платформа)',
+        'Только супер-админ (не в режиме просмотра кабинета): заявка на API и ключи.',
+        body,
+      );
     })()
     : '';
-  return `<p class="cat-panel-hint"><strong>Печать</strong> — на бланке вашей компании. Логотип — «Тарифы» → портал заказчика. Произвольное письмо — <button type="button" class="linkish" data-adm-goto-constructor="letter">конструктор «Письмо»</button>.</p>
-    <div class="adm-doc-card">
-      <div><h3>Пустой фирменный бланк</h3><p class="meta">Новое письмо · реквизиты из «Наша фирма»</p></div>
-      <div class="adm-doc-actions"><button type="button" class="primary" id="adm-letter-blank">Открыть</button></div>
-    </div>
-    <h3 class="adm-docs-subtitle">Письма оператору подписи (КЭП / ПЭП)</h3>
-    <p class="cat-panel-hint">Подключение подписи для ЭТрН — грузоотправитель (T1), перевозчик (T2/T4), грузополучатель (T3), водитель ПЭП (T2/T4).</p>
-    ${signOps || '<div class="empty">Нет шаблонов</div>'}
+  const blankCard = adminDocsCardTop(
+    '<h3>Пустой фирменный бланк</h3><p class="meta">Новое письмо · реквизиты из «Наша фирма»</p>',
+    '<button type="button" class="primary" id="adm-letter-blank">Печать</button>',
+  );
+  const signBlock = signOps
+    ? `<div class="adm-docs-card-grid">${signOps}</div>`
+    : adminDocsEmptyBlock('Нет шаблонов писем', 'Шаблоны подключения подписи появятся после настройки кабинета.');
+  return `<div class="adm-docs-panel-intro">
+    <p class="cat-panel-hint"><strong>Печать</strong> — на бланке вашей компании. Логотип и реквизиты — в <span aria-hidden="true">⚙</span> Настройки кабинета. Произвольное письмо — <button type="button" class="linkish" data-adm-goto-constructor="letter">конструктор «Письмо»</button>.</p>
+  </div>
+    <div class="adm-docs-card-grid adm-docs-blank-grid">${blankCard}</div>
+    ${adminDocsSection(
+      'Письма оператору подписи (КЭП / ПЭП)',
+      'Подключение подписи для ЭТрН: T1 грузоотправитель, T2/T4 перевозчик, T3 грузополучатель, ПЭП водителя.',
+      signBlock,
+    )}
     ${konturBlock}`;
 }
 
@@ -296,7 +317,10 @@ function adminDocsConstructorPanelHtml() {
   const isSignOp = typeof isSignOperatorLetterId === 'function' && isSignOperatorLetterId(tplId);
   const isKonturOp = typeof isOperatorLetterId === 'function' && isOperatorLetterId(tplId);
   if (!sid && !isOp) {
-    return '<div class="empty">Нет space у администратора — шаблоны привязаны к фирме.</div>';
+    return adminDocsEmptyBlock(
+      'Нет привязки к фирме',
+      'У учётной записи нет space — шаблоны документов привязаны к кабинету перевозчика. Обратитесь к супер-админу.',
+    );
   }
   const canEdit = adminDocsConstructorCanEdit(tplId);
   const sp = sid ? findSpaceById(sid) : null;
@@ -325,18 +349,18 @@ function adminDocsConstructorPanelHtml() {
     ? isKonturOp
       ? '<p class="cat-panel-hint">Письмо платформы ООО «АРМАДА» оператору ЭТрН. Исходящий номер и дата присваиваются при первой печати. Сохранение синхронизируется на сервер.</p>'
       : isSignOp
-        ? '<p class="cat-panel-hint">Письмо на бланке вашей компании для подключения подписи ЭТрН (T1/T2/T3/T4). Печать — с фирменным логотипом из «Тарифы» → портал заказчика.</p>'
+        ? '<p class="cat-panel-hint">Письмо на бланке вашей компании для подключения подписи ЭТрН (T1/T2/T3/T4). Логотип и реквизиты — в ⚙ Настройки кабинета.</p>'
         : `<p class="cat-panel-hint">Шаблоны фирмы «${esc(sp && sp.name || sid)}». После сохранения подстановка полей используется при печати документов.</p>`
     : isKonturOp
       ? '<p class="hint">Просмотр письма оператору. Редактировать может только супер-админ.</p>'
       : isSignOp
         ? '<p class="hint">Просмотр шаблона письма оператору подписи.</p>'
         : `<p class="hint">Просмотр шаблонов другой фирмы. Редактировать можно только шаблоны своего space${typeof isSuperAdmin === 'function' && isSuperAdmin() ? ' (ваш space как супер-админа)' : ''}.</p>`;
-  return `${readOnlyHint}
-    <div class="adm-tpl-layout">
+  return `<div class="adm-docs-constructor-wrap">${readOnlyHint}
+    <div class="adm-tpl-layout adm-docs-constructor-layout">
       <aside class="adm-tpl-side">
         <h3 class="adm-tpl-side-title">Шаблоны</h3>
-        <div class="adm-tpl-list">${tplList}</div>
+        <div class="adm-tpl-list adm-docs-card-grid adm-docs-tpl-grid">${tplList}</div>
         <h3 class="adm-tpl-side-title">Подстановочные поля</h3>
         <div class="adm-tpl-vars">${varsPanel}</div>
       </aside>
@@ -357,9 +381,9 @@ function adminDocsConstructorPanelHtml() {
         </div>
         <textarea id="adm-tpl-editor" class="adm-tpl-editor" rows="14"${canEdit ? '' : ' readonly'}>${esc(body)}</textarea>
         <h3 class="adm-tpl-preview-title">Превью на бланке</h3>
-        <div class="adm-tpl-preview-wrap" id="adm-tpl-preview">${preview}</div>
+        <div class="adm-tpl-preview-wrap adm-docs-preview-wrap" id="adm-tpl-preview">${preview}</div>
       </div>
-    </div>`;
+    </div></div>`;
 }
 
 function refreshAdminDocsConstructorPreview() {
@@ -621,3 +645,12 @@ function openAdminDocuments() {
   renderAdminDocuments();
   show('admin-docs-screen');
 }
+
+function setAdminDocumentsTab(tab) {
+  const allowed = { legal: 1, buh: 1, letters: 1, constructor: 1 };
+  if (!allowed[tab]) return;
+  adminDocsTab = tab;
+  paintAdminDocsTabs();
+  renderAdminDocsBody();
+}
+if (typeof window !== 'undefined') window.__armadaSetAdminDocsTab = setAdminDocumentsTab;

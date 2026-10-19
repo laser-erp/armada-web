@@ -210,9 +210,9 @@
       const isLast=idx>=ROLES_WELCOME.length-1;
       welcomeEl.innerHTML=`
         <div class="onboard-welcome-card">
-          <div class="onboard-welcome-brand">
-            <img src="logo.png" alt="" width="48" height="48" />
-            <span>АРМАДА</span>
+          <div class="onboard-welcome-brand armada-wordmark">
+            <span class="armada-wordmark-icon" aria-hidden="true"><img src="/brand/armada-mark.svg" alt="" width="22" height="22" decoding="async" /></span>
+            <span class="armada-wordmark-name">АРМАДА</span>
           </div>
           <div class="onboard-meta">${idx+1} из ${ROLES_WELCOME.length}</div>
           <h2>${esc(slide.title)}</h2>
@@ -362,6 +362,7 @@
   function maybeDriver(){
     setTimeout(()=>{
       if(!document.querySelector('#driver.show')) return;
+      if(typeof isOwnerDriverCabinetMode==='function'&&isOwnerDriverCabinetMode()) return;
       if(done(KEYS.driver)) return;
       if(tourKey===KEYS.driver && tooltipEl) return;
       startTour(KEYS.driver, TOURS.driver);

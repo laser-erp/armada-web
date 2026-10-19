@@ -5,173 +5,229 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <title>АРМАДА — кабинет логиста: заявки, парк и биржа</title>
   <meta name="description" content="Все заявки в одном кабинете: свой парк, внутренняя биржа, водитель в дороге, документы и портал заказчика. Без Excel и WhatsApp." />
-  <meta name="theme-color" content="#1e5aa8" />
+  <meta name="theme-color" content="#04050A" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/landing.css?v=2026-08-31-land4317" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Unbounded:wght@700;900&family=Onest:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/landing-night.css?v=2026-10-17-kp1" />
+  <link rel="stylesheet" href="/landing-night-kp.css?v=2026-10-17-kp1" />
 </head>
-<body class="landing landing--logist">
-  <header class="landing-top">
-    <div class="landing-top-inner">
-      <a class="landing-brand" href="/landing.html">
-        <img src="/logo.png" alt="" width="36" height="36" />
-        АРМАДА
+<body class="landing landing--night-kp">
+  <div class="kp-night-bg" aria-hidden="true"></div>
+  <div class="kp-shell">
+    <header class="top kp-top">
+      <a class="logo" href="/landing.html">
+        <i aria-hidden="true">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.6" stroke-linejoin="round" aria-hidden="true">
+            <path d="M3 20 12 4l9 16M7.5 13h9" />
+          </svg>
+        </i>
+        <b>АРМАДА</b>
       </a>
-      <nav class="landing-role-nav" aria-label="Роли">
-        <a href="/kp-logist.html" class="is-active">Логист</a>
-        <a href="/kp.html">Перевозчик</a>
-        <a href="/kp-zakaz.html">Заказчик</a>
+      <nav aria-label="Разделы">
+        <a class="nav-text is-active" href="/kp-logist.html">Логисту</a>
+        <a class="nav-text" href="/kp.html">Транспортной компании</a>
+        <a class="nav-text" href="/kp-zakaz.html">Заказчику</a>
+        <a class="nav-text" href="/kp-owner.html">Частному перевозчику</a>
+        <a class="nav-text" href="/legal.html#tariffs">Тарифы</a>
+        <a class="btn glass sm" href="/a/">Логист</a>
       </nav>
+    </header>
+
+    <main class="landing-wrap">
+      <section class="landing-hero">
+        <div>
+          <span class="landing-role-plate">Для логиста / диспетчера</span>
+          <span class="landing-hero-badge">Кабинет диспетчера · /a</span>
+          <h1>Заявки, парк и биржа — в одном окне, без Excel</h1>
+          <p class="landing-hero-lead">Штатный логист или диспетчер-посредник: закрываете заявки быстрее, грузите свой парк, остаток отдаёте партнёрам. Заказчик и водитель подключаются ссылками — без установки приложений.</p>
+          <div class="landing-hero-cta landing-hero-cta--with-pilot">
+            <a class="btn red" href="/a/">Войти в кабинет</a>
+            <a class="btn glass" href="/pilot.html?role=logist">Попробовать бесплатно 30 дней</a>
+            <a class="btn glass landing-hero-cta-pilot" href="#pilot" data-pilot-open>Участвовать в пилотном проекте</a>
+          </div>
+          <p class="landing-hero-note">Заявка на 30 дней и пилот — в «Заявки на подключение» у супера. Водитель парка — <a href="/v/">вход /v</a>.</p>
+        </div>
+        <aside class="landing-hero-visual" aria-hidden="true">
+          <h3>Что меняется после подключения</h3>
+          <div class="landing-stat-grid">
+            <div class="landing-stat"><b>Меньше звонков</b><span>водитель видит маршрут на телефоне</span></div>
+            <div class="landing-stat"><b>1 экран</b><span>вместо Excel + WhatsApp + ATI</span></div>
+            <div class="landing-stat"><b>Цена сразу</b><span>минимум по тарифу — меньше споров</span></div>
+            <div class="landing-stat"><b>Биржа</b><span>остаток заявки партнёру в один клик</span></div>
+          </div>
+        </aside>
+      </section>
+
+      <div class="landing-trust">
+        <span><b>Для парка 1–15 машин</b></span>
+        <span>·</span>
+        <span>Штатный логист и экспедитор без своего парка</span>
+        <span>·</span>
+        <span>Не замена ATI — свой кабинет и своя сеть</span>
+      </div>
+
+      <section class="landing-section">
+        <h2>Знакомо?</h2>
+        <p class="landing-section-sub">Если хотя бы два пункта — про вас, кабинет окупится на первых заявках.</p>
+        <div class="landing-pain-grid">
+          <div class="landing-pain bad">
+            <div class="landing-pain-label">Было</div>
+            <p>Заявки в Excel, уточнения в WhatsApp, водитель звонит «а адрес точный?», цена «на словах» — потом спор с заказчиком.</p>
+          </div>
+          <div class="landing-pain good">
+            <div class="landing-pain-label">Станет</div>
+            <p>Заявка в кабинете → назначили машину → водитель видит маршрут → заказчик смотрит статус в портале. Маржа и ставка партнёра — в цифрах.</p>
+          </div>
+        </div>
+      </section>
+
+      <section class="landing-section">
+        <h2>Что получает логист</h2>
+        <div class="landing-features">
+          <div class="landing-feature">
+            <div class="landing-feature-icon" aria-hidden="true">📋</div>
+            <div><b>Все заявки в одном месте</b><p>Входящие от заказчика, свои заказы, биржа — не теряются детали и сроки.</p></div>
+          </div>
+          <div class="landing-feature">
+            <div class="landing-feature-icon" aria-hidden="true">🚛</div>
+            <div><b>Сначала свой парк</b><p>Свободные машины — в приоритете. Бронь подтверждаете вы, дата появляется у заказчика.</p></div>
+          </div>
+          <div class="landing-feature">
+            <div class="landing-feature-icon" aria-hidden="true">🔄</div>
+            <div><b>Остаток на биржу</b><p>Нет своего ТС — заявка партнёру. Вы заказчик перевозки, маржа прозрачна.</p></div>
+          </div>
+          <div class="landing-feature">
+            <div class="landing-feature-icon" aria-hidden="true">📱</div>
+            <div><b>Водитель в дороге</b><p>Смена, ЕТО, заказы на телефоне по ссылке SMS/QR — без отдельного приложения.</p></div>
+          </div>
+          <div class="landing-feature">
+            <div class="landing-feature-icon" aria-hidden="true">💰</div>
+            <div><b>Минимальная цена заказчику</b><p>Тариф считает ориентир до отправки — меньше «перезвоните, сколько будет».</p></div>
+          </div>
+          <div class="landing-feature">
+            <div class="landing-feature-icon" aria-hidden="true">📄</div>
+            <div><b>Договор-заявка и документы</b><p>По рейсу — заявка, акт, счёт. Предупреждение, если у водителя не хватает документов.</p></div>
+          </div>
+        </div>
+      </section>
+
+      <section class="landing-section">
+        <div class="landing-card">
+          <h2>Диспетчер-посредник — без своего парка</h2>
+          <p class="landing-section-sub" style="margin-bottom:12px">Галочка «биржа» в кабинете: сводите заказчика и транспортную компанию, для грузоотправителя исполнитель — вы.</p>
+          <ul>
+            <li><strong>Маржа в цифрах</strong> — цена заказчику минус цена перевозчику, не «на словах»</li>
+            <li><strong>Партнёр забирает кнопкой</strong> — договор-заявка создаётся сразу</li>
+            <li><strong>Не нужен свой водитель</strong> — назначаете машину партнёра из справочника</li>
+          </ul>
+        </div>
+      </section>
+
+      <section class="landing-section">
+        <h2>Как начать за 3 шага</h2>
+        <ol class="landing-steps">
+          <li><b>Подключаем кабинет</b>Заводим парк, тарифы, портал заказчика. Пробный период 30 дней — на реальных заявках.</li>
+          <li><b>Раздаёте ссылки</b>QR/SMS водителям и заказчикам. Они входят с телефона без установки.</li>
+          <li><b>Ведёте рейсы</b>Заявка → назначение → документы → закрытие. Остаток — на биржу партнёрам.</li>
+        </ol>
+      </section>
+
+      <section class="landing-section">
+        <h2>Отзывы логистов и владельцев парка</h2>
+        <div class="landing-reviews">
+          <blockquote class="landing-review">
+            <q>Раньше заявки в Excel и в WhatsApp — постоянно терялись детали. Сейчас всё в одном месте: водитель видит заказ в дороге, я закрываю смену без звонков вечером.</q>
+            <cite><strong>Андрей К.</strong> · логист, 6 машин · Тверская область</cite>
+          </blockquote>
+          <blockquote class="landing-review">
+            <q>Биржа между кабинетами — главная фишка. Сдали заявку коллеге из соседнего города, не в ATI и не по телефону в неизвестность.</q>
+            <cite><strong>Ирина В.</strong> · экспедитор со своим парком · 4 ТС</cite>
+          </blockquote>
+          <blockquote class="landing-review">
+            <q>Заказчик сам кидает заявку с телефона — меньше «перезвоните, сколько будет». Минимальная цена считается, споров меньше.</q>
+            <cite><strong>Михаил Н.</strong> · ООО «СеверЛогистик» · 8 машин</cite>
+          </blockquote>
+        </div>
+      </section>
+
+      <section class="landing-section">
+        <h2>Тарифы</h2>
+        <div class="landing-tariffs-note">
+          <strong>Тарифы — по запросу</strong>
+          <p>Стоимость зависит от размера парка и нужных функций. Напишите — подберём вариант. Подробности — в <a href="/legal.html#tariffs">оферте</a>.</p>
+        </div>
+      </section>
+
+      <section class="landing-card landing-pilot">
+        <h2>Сделаем сервис под ваши задачи</h2>
+        <p>Пилотный проект: 3 месяца бесплатно, все функции, перенос из Excel, продление при активном участии. Или начните с пробного периода 30 дней.</p>
+        <p><strong>Связь:</strong> <a href="mailto:hello@armada.sx">hello@armada.sx</a> · <a href="mailto:pilot@armada.sx">pilot@armada.sx</a></p>
+        <div class="landing-cta-bar">
+          <a class="landing-btn landing-btn-secondary" href="/a/">Войти в кабинет</a>
+          <a class="landing-btn landing-btn-ghost" href="/pilot.html?role=logist">Заявка на 30 дней</a>
+          <a class="landing-btn landing-btn-ghost" href="#pilot" data-pilot-open>Пилот 3 месяца</a>
+        </div>
+      </section>
+    </main>
+
+    <footer class="kp-footer">
+      <span>© АРМАДА · учёт перевозок</span>
+      <span>
+        <a href="/help.html?role=admin">Помощь логисту</a>
+        <a href="/legal.html">Оферта</a>
+        <a href="/landing.html">Главная</a>
+        <a href="mailto:support@armada.sx">support@armada.sx</a>
+      </span>
+    </footer>
+  </div>
+
+  <div class="pilot-modal" id="pilot" role="dialog" aria-modal="true" aria-labelledby="pilot-project-title" hidden>
+    <button type="button" class="pilot-modal-backdrop" data-pilot-close aria-label="Закрыть окно пилотного проекта"></button>
+    <div class="pilot-modal-panel pilot-project-inner">
+      <button type="button" class="pilot-modal-close" data-pilot-close aria-label="Закрыть">
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+          <path d="M6 6l12 12M18 6L6 18" />
+        </svg>
+      </button>
+      <h2 id="pilot-project-title">Сделаем сервис под ваши задачи</h2>
+      <ul class="pilot-project-points">
+        <li>3 месяца бесплатно, все функции</li>
+        <li>Ваши пожелания — в первую очередь</li>
+        <li>Прямая связь с командой</li>
+        <li>Переносим заказы, машины и водителей из Excel</li>
+        <li>Продление при активном участии</li>
+      </ul>
+      <p class="pilot-project-from-you"><strong>Что от вас:</strong> Работать в АРМАДЕ и раз в неделю говорить, что неудобно.</p>
+      <form id="landing-pilot-form" class="landing-pilot-form">
+        <label>
+          Имя <span class="req">*</span>
+          <input type="text" id="landing-pilot-name" name="contactName" required autocomplete="name" placeholder="Как к вам обращаться" />
+        </label>
+        <label>
+          Телефон <span class="req">*</span>
+          <input type="tel" id="landing-pilot-phone" name="phone" required autocomplete="tel" placeholder="+7 …" />
+        </label>
+        <label>
+          Компания
+          <input type="text" id="landing-pilot-company" name="company" autocomplete="organization" placeholder="ООО «…» или ИП" />
+        </label>
+        <label>
+          Сколько машин в парке (ориентир)
+          <input type="text" id="landing-pilot-fleet" name="fleetSize" inputmode="numeric" placeholder="6" />
+        </label>
+        <label>
+          Что вам нужно в работе
+          <textarea id="landing-pilot-needs" name="workNeeds" rows="3" placeholder="Биржа, портал заказчика, отчёты…"></textarea>
+        </label>
+        <p class="landing-pilot-status" id="landing-pilot-status" hidden></p>
+        <button type="submit" class="btn red landing-pilot-submit" id="landing-pilot-submit">Отправить заявку на пилот</button>
+        <p class="landing-pilot-legal">Нажимая «Отправить», вы соглашаетесь на обработку данных для связи. <a href="/legal.html#privacy">Политика ПДн</a></p>
+      </form>
     </div>
-  </header>
+  </div>
 
-  <main class="landing-wrap">
-    <section class="landing-hero">
-      <div>
-        <span class="landing-hero-badge">Кабинет диспетчера · /a</span>
-        <h1>Заявки, парк и биржа — в одном окне, без Excel</h1>
-        <p class="landing-hero-lead">Штатный логист или диспетчер-посредник: закрываете заявки быстрее, грузите свой парк, остаток отдаёте партнёрам. Заказчик и водитель подключены ссылками — без установки приложений.</p>
-        <div class="landing-hero-cta">
-          <a class="landing-btn landing-btn-primary" href="/a/">Войти в кабинет</a>
-          <a class="landing-btn landing-btn-secondary" href="/pilot.html?role=logist">Запросить пилот 30 дней</a>
-        </div>
-        <p class="landing-hero-note">Пилот для 2–3 партнёров · тариф от 2 990 ₽/мес · пробный период</p>
-      </div>
-      <aside class="landing-hero-visual" aria-hidden="true">
-        <h3>Что меняется после подключения</h3>
-        <div class="landing-stat-grid">
-          <div class="landing-stat"><b>−70%</b><span>звонков водителю «куда ехать»</span></div>
-          <div class="landing-stat"><b>1 экран</b><span>вместо Excel + WhatsApp + ATI</span></div>
-          <div class="landing-stat"><b>Цена сразу</b><span>минимум по тарифу — меньше споров</span></div>
-          <div class="landing-stat"><b>Биржа</b><span>остаток заявки партнёру в один клик</span></div>
-        </div>
-      </aside>
-    </section>
-
-    <div class="landing-trust">
-      <span><b>Для парка 1–15 машин</b></span>
-      <span>·</span>
-      <span>Штатный логист и экспедитор без своего парка</span>
-      <span>·</span>
-      <span>Не замена ATI — свой кабинет и своя сеть</span>
-    </div>
-
-    <section class="landing-section">
-      <h2>Знакомо?</h2>
-      <p class="landing-section-sub">Если хотя бы два пункта — про вас, кабинет окупится на первых заявках.</p>
-      <div class="landing-pain-grid">
-        <div class="landing-pain bad">
-          <div class="landing-pain-label">Было</div>
-          <p>Заявки в Excel, уточнения в WhatsApp, водитель звонит «а адрес точный?», цена «на словах» — потом спор с заказчиком.</p>
-        </div>
-        <div class="landing-pain good">
-          <div class="landing-pain-label">Станет</div>
-          <p>Заявка в кабинете → назначили машину → водитель видит маршрут → заказчик смотрит статус в портале. Маржа и ставка партнёра — в цифрах.</p>
-        </div>
-      </div>
-    </section>
-
-    <section class="landing-section">
-      <h2>Что получает логист</h2>
-      <div class="landing-features">
-        <div class="landing-feature">
-          <div class="landing-feature-icon" aria-hidden="true">📋</div>
-          <div><b>Все заявки в одном месте</b><p>Входящие от заказчика, свои заказы, биржа — не теряются детали и сроки.</p></div>
-        </div>
-        <div class="landing-feature">
-          <div class="landing-feature-icon" aria-hidden="true">🚛</div>
-          <div><b>Сначала свой парк</b><p>Свободные машины — в приоритете. Бронь подтверждаете вы, дата появляется у заказчика.</p></div>
-        </div>
-        <div class="landing-feature">
-          <div class="landing-feature-icon" aria-hidden="true">🔄</div>
-          <div><b>Остаток на биржу</b><p>Нет своего ТС — заявка партнёру. Вы заказчик перевозки, маржа прозрачна.</p></div>
-        </div>
-        <div class="landing-feature">
-          <div class="landing-feature-icon" aria-hidden="true">📱</div>
-          <div><b>Водитель в дороге</b><p>Смена, ЕТО, заказы на телефоне по ссылке SMS/QR — без отдельного приложения.</p></div>
-        </div>
-        <div class="landing-feature">
-          <div class="landing-feature-icon" aria-hidden="true">💰</div>
-          <div><b>Минимальная цена заказчику</b><p>Тариф считает ориентир до отправки — меньше «перезвоните, сколько будет».</p></div>
-        </div>
-        <div class="landing-feature">
-          <div class="landing-feature-icon" aria-hidden="true">📄</div>
-          <div><b>Договор-заявка и документы</b><p>По рейсу — заявка, акт, ЭТрН в тарифе «Бизнес». Предупреждение, если у водителя не хватает документов.</p></div>
-        </div>
-      </div>
-    </section>
-
-    <section class="landing-section">
-      <div class="landing-card">
-        <h2>Диспетчер-посредник — без своего парка</h2>
-        <p class="landing-section-sub" style="margin-bottom:12px">Галочка «биржа» в кабинете: сводите заказчика и перевозчика, для грузоотправителя исполнитель — вы.</p>
-        <ul>
-          <li><strong>Маржа в цифрах</strong> — цена заказчику минус цена перевозчику, не «на словах»</li>
-          <li><strong>Партнёр забирает кнопкой</strong> — договор-заявка создаётся сразу</li>
-          <li><strong>Не нужен свой водитель</strong> — назначаете машину партнёра из справочника</li>
-        </ul>
-      </div>
-    </section>
-
-    <section class="landing-section">
-      <h2>Как начать за 3 шага</h2>
-      <ol class="landing-steps">
-        <li><b>Подключаем кабинет</b>Заводим парк, тарифы, портал заказчика. Пилот 30 дней — на реальных заявках.</li>
-        <li><b>Раздаёте ссылки</b>QR/SMS водителям и заказчикам. Они входят с телефона без установки.</li>
-        <li><b>Ведёте рейсы</b>Заявка → назначение → документы → закрытие. Остаток — на биржу партнёрам.</li>
-      </ol>
-    </section>
-
-    <section class="landing-section">
-      <h2>Отзывы логистов и владельцев парка</h2>
-      <div class="landing-reviews">
-        <blockquote class="landing-review">
-          <q>Раньше заявки в Excel и в WhatsApp — постоянно терялись детали. Сейчас всё в одном месте: водитель видит заказ в дороге, я закрываю смену без звонков вечером.</q>
-          <cite><strong>Андрей К.</strong> · перевозчик-логист, 6 машин · Тверская область</cite>
-        </blockquote>
-        <blockquote class="landing-review">
-          <q>Биржа между кабинетами — главная фишка. Сдали заявку коллеге из соседнего города, не в ATI и не по телефону в неизвестность.</q>
-          <cite><strong>Ирина В.</strong> · экспедитор со своим парком · 4 ТС</cite>
-        </blockquote>
-        <blockquote class="landing-review">
-          <q>Заказчик сам кидает заявку с телефона — меньше «перезвоните, сколько будет». Минимальная цена считается, споров меньше.</q>
-          <cite><strong>Михаил Н.</strong> · ООО «СеверЛогистик» · 8 машин</cite>
-        </blockquote>
-      </div>
-    </section>
-
-    <section class="landing-section">
-      <h2>Тарифы</h2>
-      <div class="landing-tariffs">
-        <div class="landing-tariff">
-          <strong>Старт</strong>
-          <div class="price">2 990 ₽/мес</div>
-          <div class="muted">Малый парк, портал заказчика, водитель. Без биржи и ЭТрН.</div>
-        </div>
-        <div class="landing-tariff featured">
-          <strong>Бизнес</strong>
-          <div class="price">7 990 ₽/мес</div>
-          <div class="muted">Биржа между перевозчиками, ЭТрН, больше водителей и машин.</div>
-        </div>
-      </div>
-      <p class="landing-section-sub" style="margin-top:12px;font-size:.85rem">Точные лимиты — в программе и оферте. Оператор ЭТрН — отдельно.</p>
-    </section>
-
-    <section class="landing-card landing-pilot">
-      <h2>Пилот 30 дней — без риска</h2>
-      <p>Подключаем кабинет, помогаем с запуском, вы тестируете на живых заявках. Если не зайдёт — просто не продлеваете.</p>
-      <p><strong>Связь:</strong> <a href="mailto:hello@armada.sx">hello@armada.sx</a> · <a href="mailto:support@armada.sx">support@armada.sx</a></p>
-      <div class="landing-cta-bar" style="margin-top:16px">
-        <a class="landing-btn landing-btn-secondary" href="/pilot.html?role=logist" style="background:#fff">Запросить пилот</a>
-        <a class="landing-btn landing-btn-ghost" href="/a/" style="color:#fff;border-color:rgba(255,255,255,.4)">Уже есть доступ — войти</a>
-      </div>
-    </section>
-  </main>
-
-  <footer class="landing-wrap landing-footer">
-    <p><a href="/help.html?role=admin">Инструкция для логиста</a> · <a href="/legal.html">Оферта</a> · <a href="/landing.html">Все роли</a></p>
-    <p><a href="mailto:hello@armada.sx">hello@armada.sx</a> · <a href="mailto:pilot@armada.sx">pilot@armada.sx</a> · <a href="mailto:support@armada.sx">support@armada.sx</a></p>
-    <p>АРМАДА · app.armada.sx</p>
-  </footer>
+  <script src="/landing-pilot-modal.js?v=2026-10-17-kp1"></script>
+  <script src="/landing-pilot-form.js?v=2026-10-17-kp1"></script>
 </body>
 </html>

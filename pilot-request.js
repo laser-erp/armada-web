@@ -1,6 +1,6 @@
 /* pilot.html — заявка на пилот 30 дней (без mailto) */
 (function () {
-  var BUILD = '2026-08-31-pilot4317';
+  var BUILD = '2026-10-17-kp1';
   var form = null;
   var statusEl = null;
 
@@ -42,17 +42,27 @@
     var badge = qs('pilot-badge');
     var lead = qs('pilot-lead');
     var login = qs('pilot-login-link');
+    var headerLogin = qs('pilot-header-login');
     if (params.role === 'carrier') {
-      if (title) title.textContent = 'Пилот для перевозчика';
-      if (badge) badge.textContent = 'Пилот 30 дней · перевозчик';
-      if (lead) lead.textContent = 'Подключим кабинет под ваш парк — водители по ссылке, заявки от логиста. Пилот 30 дней на реальных рейсах.';
-      if (login) login.href = '/v/';
-      document.title = 'Пилот перевозчика — АРМАДА';
-    } else {
-      if (title) title.textContent = 'Пилот для логиста';
-      if (badge) badge.textContent = 'Пилот 30 дней · логист';
+      if (title) title.textContent = 'Заявка для транспортной компании';
+      if (badge) badge.textContent = 'Пробный период 30 дней · парк';
+      if (lead) lead.textContent = 'Подключим кабинет под ваш парк — водители по ссылке, заявки от логиста. Пробный период 30 дней на реальных рейсах.';
       if (login) login.href = '/a/';
-      document.title = 'Пилот логиста — АРМАДА';
+      if (headerLogin) {
+        headerLogin.href = '/a/';
+        headerLogin.textContent = 'Кабинет';
+      }
+      document.title = 'Попробовать 30 дней — транспортная компания — АРМАДА';
+    } else {
+      if (title) title.textContent = 'Заявка для логиста';
+      if (badge) badge.textContent = 'Пробный период 30 дней · логист';
+      if (lead) lead.textContent = 'Подключим кабинет диспетчера — заявки, парк и биржа. Пробный период 30 дней на реальных заявках.';
+      if (login) login.href = '/a/';
+      if (headerLogin) {
+        headerLogin.href = '/a/';
+        headerLogin.textContent = 'Логист';
+      }
+      document.title = 'Попробовать 30 дней — логист — АРМАДА';
     }
   }
 
@@ -65,6 +75,7 @@
       contactName: (qs('pilot-name') && qs('pilot-name').value || '').trim(),
       city: (qs('pilot-city') && qs('pilot-city').value || '').trim(),
       fleetSize: (qs('pilot-fleet') && qs('pilot-fleet').value || '').trim(),
+      workNeeds: (qs('pilot-needs') && qs('pilot-needs').value || '').trim(),
       comment: (qs('pilot-comment') && qs('pilot-comment').value || '').trim(),
       source: 'pilot.html'
     };
@@ -109,7 +120,7 @@
       showStatus('', null);
     } catch (e) {
       console.warn('pilot lead', e);
-      showStatus('Не удалось отправить автоматически. Позвоните +7 (965) 073-00-02 или напишите hello@armada.sx', false);
+      showStatus('Не удалось отправить автоматически. Позвоните +7 (999) 000-00-00 или напишите hello@armada.sx', false);
     } finally {
       if (btn) btn.disabled = false;
     }
@@ -122,6 +133,10 @@
     if (form) form.addEventListener('submit', submitPilot);
     var again = qs('pilot-again');
     if (again) again.addEventListener('click', resetForm);
+    if (location.hash === '#needs') {
+      var needsEl = qs('pilot-needs');
+      if (needsEl) setTimeout(function () { needsEl.focus(); }, 120);
+    }
   }
 
   if (document.readyState === 'loading') {

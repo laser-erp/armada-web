@@ -21,28 +21,36 @@
   <link rel="icon" type="image/png" sizes="192x192" href="/icons/icon-192.png" />
   <meta http-equiv="Cache-Control" content="no-cache" />
     <link rel="stylesheet" href="/styles.css?v=2026-09-01-legal4317" />
+    <link rel="stylesheet" href="/brand/armada-wordmark.css?v=2026-10-18-splash" />
     <link rel="stylesheet" href="/entry.css?v=2026-09-01-legal4317" />
+    <link rel="stylesheet" href="/redesign-light.css?v=2026-10-17-redesign-light" />
+    <link rel="stylesheet" href="/redesign-docs.css?v=2026-10-17-redesign-docs" />
+    <link rel="stylesheet" href="/redesign-profile.css?v=2026-10-17-redesign-profile" />
 
 </head>
 <body>
 <div class="phone" id="shell">
-  <div id="splash" class="screen show"><div class="center splash-hero">
-    <img class="logo" src="/logo.png" alt="АРМАДА" />
-    <div class="brand">АРМАДА</div>
-    <div class="sub">Учёт перевозок</div>
-    <div class="splash-accent" aria-hidden="true"></div>
+  <div id="splash" class="screen show"><div class="center splash-shell">
+    <div class="armada-wordmark armada-wordmark--splash" aria-label="АРМАДА">
+      <span class="armada-wordmark-icon" aria-hidden="true"><img src="/brand/armada-mark.svg" alt="" width="22" height="22" decoding="async" /></span>
+      <span class="armada-wordmark-name">АРМАДА</span>
+    </div>
+    <div class="splash-progress" role="progressbar" aria-label="Загрузка"><span class="splash-progress-bar"></span></div>
   </div></div>
 
   <div id="roles" class="screen"><div class="center roles-hub">
     <div class="roles-hub-head">
-      <img class="logo" src="/logo.png" alt="АРМАДА" />
-      <h1 class="roles-hub-title">Учёт перевозок — каждому своя выгода</h1>
-      <p class="roles-hub-lead">Заявки, парк, биржа и портал заказчика. Нажмите на роль — расскажем, что получите.</p>
-      <div class="hint" id="sync-hint" style="display:none;margin-bottom:4px"></div>
+      <div class="roles-hub-brand" aria-hidden="true">
+        <span class="roles-hub-brand-armada">АРМАДА</span>
+        <span class="roles-hub-brand-sub">УЧЁТ</span>
+      </div>
+      <h1 class="roles-hub-title">Грузоперевозки без рутины</h1>
+      <p class="roles-hub-lead">Заявки, рейсы, водители и документы — в одной системе. Заказчик оставляет заявку сам, водитель ведёт рейс с телефона, акт и счёт собираются из данных рейса.</p>
+      <div class="error" id="sync-hint" style="display:none;margin:0 0 6px"></div>
     </div>
     <div class="role-hub-stack">
       <a class="role-hub-card role-hub-logist" href="/kp-logist.html">
-        <span class="role-hub-icon" aria-hidden="true">📋</span>
+        <span class="role-hub-icon" aria-hidden="true"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="3" width="14" height="18" rx="2"></rect><path d="M9 8h6M9 12h6M9 16h4"></path></svg></span>
         <div class="role-hub-body">
           <span class="role-hub-badge">Логист / диспетчер</span>
           <strong class="role-hub-name">Кабинет · заявки и биржа</strong>
@@ -51,16 +59,25 @@
         </div>
       </a>
       <a class="role-hub-card role-hub-carrier" href="/kp.html">
-        <span class="role-hub-icon" aria-hidden="true">🚛</span>
+        <span class="role-hub-icon" aria-hidden="true"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 7h11v9H2zM13 10h4l4 3v3h-8"></path><circle cx="6" cy="18" r="2"></circle><circle cx="17" cy="18" r="2"></circle></svg></span>
         <div class="role-hub-body">
-          <span class="role-hub-badge">Перевозчик</span>
+          <span class="role-hub-badge">Транспортная компания</span>
           <strong class="role-hub-name">Парк и заказы от логистов</strong>
           <span class="role-hub-teaser">Забираете заявку кнопкой — ставка в цифрах, водитель ведёт рейс с телефона.</span>
-          <span class="role-hub-cta">Читать для перевозчика →</span>
+          <span class="role-hub-cta">Читать для транспортной компании →</span>
+        </div>
+      </a>
+      <a class="role-hub-card role-hub-owner" href="/owner-register.html">
+        <span class="role-hub-icon" aria-hidden="true"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2"></path><circle cx="12" cy="7" r="4"></circle></svg></span>
+        <div class="role-hub-body">
+          <span class="role-hub-badge">Частный перевозчик</span>
+          <strong class="role-hub-name">Кабинет · парк и рейс с телефона</strong>
+          <span class="role-hub-teaser">Своя машина и учёт — смена, ЕТО и заявки без отдельного приложения.</span>
+          <span class="role-hub-cta">Попробовать бесплатно 30 дней →</span>
         </div>
       </a>
       <a class="role-hub-card role-hub-customer" href="/kp-zakaz.html">
-        <span class="role-hub-icon" aria-hidden="true">📦</span>
+        <span class="role-hub-icon" aria-hidden="true"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 8l-9-5-9 5 9 5 9-5zM3 8v8l9 5 9-5V8M12 13v8"></path></svg></span>
         <div class="role-hub-body">
           <span class="role-hub-badge">Заказчик</span>
           <strong class="role-hub-name">Портал · заявка с телефона</strong>
@@ -72,8 +89,9 @@
     <div class="role-hub-login">
       <p class="role-hub-login-label">Уже подключены — войти</p>
       <div class="role-hub-login-row">
-        <a class="role-hub-login-btn role-hub-login-admin" href="/a/">Кабинет</a>
-        <a class="role-hub-login-btn" href="/v/">Водитель</a>
+        <a class="role-hub-login-btn role-hub-login-admin" href="/a/">Логист</a>
+        <a class="role-hub-login-btn" href="/o/" title="Частный перевозчик — отдельный вход">Частный перевозчик</a>
+        <a class="role-hub-login-btn" href="/v/" title="Наёмный водитель">Водитель</a>
         <a class="role-hub-login-btn" href="/z/">Заказчик</a>
       </div>
     </div>
@@ -82,12 +100,28 @@
     </p>
   </div></div>
 
+  <div id="owner-login" class="screen"><div class="center">
+    <div class="auth-panel">
+      <button type="button" class="auth-back" id="owner-login-back">← Назад</button>
+      <div class="armada-wordmark" aria-hidden="true"><span class="armada-wordmark-icon" aria-hidden="true"><img src="/brand/armada-mark.svg" alt="" width="22" height="22" decoding="async" /></span><span class="armada-wordmark-name">АРМАДА</span></div>
+      <h2>Вход частного перевозчика</h2>
+      <div class="sub">Телефон и PIN вашей учётки. Сразу откроется кабинет частного перевозчика.</div>
+      <label for="owner-login-phone">Телефон</label>
+      <input id="owner-login-phone" inputmode="tel" placeholder="+79990000000" autocomplete="tel" />
+      <label for="owner-login-pin">PIN</label>
+      <input id="owner-login-pin" inputmode="numeric" maxlength="8" placeholder="••••" autocomplete="current-password" />
+      <div class="error" id="owner-login-error"></div>
+      <button class="primary" id="owner-login-ok">Войти</button>
+      <div class="hint">Нет учётки? <a href="/owner-register.html">Регистрация</a>. Наёмным — <a href="/v/">/v/</a>, логистам — <a href="/a/">/a/</a>.</div>
+    </div>
+  </div></div>
+
   <div id="driver-login" class="screen"><div class="center">
     <div class="auth-panel">
       <button type="button" class="auth-back" id="driver-login-back">← Назад</button>
-      <img class="logo" src="/logo.png" alt="АРМАДА" />
+      <div class="armada-wordmark" aria-hidden="true"><span class="armada-wordmark-icon" aria-hidden="true"><img src="/brand/armada-mark.svg" alt="" width="22" height="22" decoding="async" /></span><span class="armada-wordmark-name">АРМАДА</span></div>
       <h2>Вход водителя</h2>
-      <div class="sub">Сначала телефон — затем PIN</div>
+      <div class="sub">Телефон и PIN наёмного водителя. Частному перевозчику — отдельный вход <a href="/o/">/o/</a>.</div>
       <label for="drv-login-phone">Телефон</label>
       <input id="drv-login-phone" inputmode="tel" placeholder="+79990000000" autocomplete="tel" />
       <div id="driver-pick-panel" style="display:none">
@@ -108,7 +142,7 @@
   <div id="admin-pin" class="screen"><div class="center">
     <div class="auth-panel">
       <button type="button" class="auth-back" id="pin-back">← Назад</button>
-      <img class="logo" src="/logo.png" alt="АРМАДА" />
+      <div class="armada-wordmark" aria-hidden="true"><span class="armada-wordmark-icon" aria-hidden="true"><img src="/brand/armada-mark.svg" alt="" width="22" height="22" decoding="async" /></span><span class="armada-wordmark-name">АРМАДА</span></div>
       <h2>Вход администратора</h2>
       <div class="sub">Телефон или ИНН организации и PIN</div>
       <label for="admin-login-inn">Телефон или ИНН</label>
@@ -124,7 +158,7 @@
   <div id="customer-login" class="screen"><div class="center">
     <div class="auth-panel">
       <button type="button" class="auth-back" id="cust-login-back">← Назад</button>
-      <img class="logo" src="/logo.png" alt="АРМАДА" />
+      <div class="armada-wordmark" aria-hidden="true"><span class="armada-wordmark-icon" aria-hidden="true"><img src="/brand/armada-mark.svg" alt="" width="22" height="22" decoding="async" /></span><span class="armada-wordmark-name">АРМАДА</span></div>
       <h2>Вход заказчика</h2>
       <div class="sub">Телефон и PIN из карточки заказчика</div>
       <p class="hint" id="cust-login-scope" style="display:none"></p>
@@ -456,6 +490,41 @@
                 </div>
                 <div id="cust-price-preview" class="schedule-box"></div>
                 <div id="cust-quote-variants" class="schedule-box" style="margin-top:8px"></div>
+                <label for="cust-pricing-mode">Вид оплаты</label>
+                <select id="cust-pricing-mode">
+                  <option value="shift">Смена — пакет из тарифа</option>
+                  <option value="hourly">Почасовая — по факту, не ниже минималки</option>
+                  <option value="trip">Рейс — фикс в заявке</option>
+                </select>
+                <div id="cust-pricing-trip-fields" style="display:none">
+                  <label for="cust-trip-price">Цена за рейс, ₽</label>
+                  <input id="cust-trip-price" inputmode="decimal" placeholder="стоимость рейса" />
+                  <div class="form-triple">
+                    <div>
+                      <label for="cust-trip-km-limit">Лимит км</label>
+                      <input id="cust-trip-km-limit" inputmode="numeric" placeholder="необяз." />
+                    </div>
+                    <div>
+                      <label for="cust-trip-load-min">Лимит погрузки, мин</label>
+                      <input id="cust-trip-load-min" inputmode="numeric" placeholder="необяз." />
+                    </div>
+                    <div>
+                      <label for="cust-trip-unload-min">Лимит выгрузки, мин</label>
+                      <input id="cust-trip-unload-min" inputmode="numeric" placeholder="необяз." />
+                    </div>
+                  </div>
+                </div>
+                <div id="cust-pricing-shift-fields">
+                  <label for="cust-shift-code">Пакет смены</label>
+                  <select id="cust-shift-code">
+                    <option value="3+1">3+1</option>
+                    <option value="4+1">4+1</option>
+                    <option value="5+1">5+1</option>
+                    <option value="7+1" selected>7+1</option>
+                    <option value="8+1">8+1</option>
+                  </select>
+                </div>
+                <p class="hint" id="cust-pricing-hourly-hint" style="display:none">Минимум часов — из тарифа перевозчика.</p>
                 <label for="cust-price">Ваша цена, ₽ (не ниже минимума, если он есть)</label>
                 <input id="cust-price" inputmode="decimal" placeholder="из расчёта или уточнит перевозчик" />
                 <div class="error" id="cust-form-error"></div>
@@ -513,6 +582,9 @@
             <div class="chat-thread" id="cust-chat-thread" role="region" aria-label="Сообщения чата" aria-live="polite"></div>
             <div class="chat-action-tray" id="cust-chat-tray" hidden></div>
             <div class="cust-chat-footer">
+              <div class="cust-chat-quick-actions" id="cust-chat-quick-actions" hidden>
+                <button type="button" class="cust-repeat-order-btn" id="cust-chat-repeat-last">Повторить прошлую</button>
+              </div>
               <div class="chat-compose" id="cust-chat-compose">
                 <input id="cust-chat-input" placeholder="Сообщение…" aria-label="Сообщение" autocomplete="off" enterkeyhint="enter" lang="ru" />
                 <button type="button" id="cust-chat-send" aria-label="Отправить" title="Отправить" disabled>➤</button>
@@ -569,19 +641,20 @@
         <div class="admin-sidebar-user" id="admin-sidebar-user"></div>
         <div class="admin-sidebar-cabinet" id="admin-sidebar-cabinet" hidden></div>
         <nav class="admin-sidebar-nav">
-          <button type="button" class="admin-nav-item on" data-nav="orders">Парк</button>
-          <button type="button" class="admin-nav-item" data-nav="eto">ЕТО</button>
-          <button type="button" class="admin-nav-item" data-nav="exchange">Биржа</button>
-          <button type="button" class="admin-nav-item" data-nav="catalogs" id="admin-catalogs">Справочники</button>
-          <button type="button" class="admin-nav-item" data-nav="links" id="admin-links">Ссылки</button>
-          <button type="button" class="admin-nav-item" data-nav="documents" id="admin-documents">Документы</button>
-          <button type="button" class="admin-nav-item" data-nav="profile" id="admin-profile">Профиль логиста</button>
+          <button type="button" class="admin-nav-item on" data-nav="orders"><svg class="admin-nav-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><rect x="3" y="8" width="11" height="8" rx="1"/><path d="M14 10h3l3 3v3h-6v-6z"/><circle cx="7" cy="18" r="2"/><circle cx="18" cy="18" r="2"/></svg>Парк</button>
+          <button type="button" class="admin-nav-item" data-nav="eto"><svg class="admin-nav-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11"/></svg>ЕТО</button>
+          <button type="button" class="admin-nav-item" data-nav="exchange"><svg class="admin-nav-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M7 7h10l-3-3M17 17H7l3 3"/></svg>Биржа</button>
+          <button type="button" class="admin-nav-item" data-nav="catalogs" id="admin-catalogs"><svg class="admin-nav-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h10"/></svg>Справочники</button>
+          <button type="button" class="admin-nav-item" data-nav="links" id="admin-links"><svg class="admin-nav-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M10 13a5 5 0 007 0l1-1a5 5 0 00-7-7l-1 1"/><path d="M14 11a5 5 0 00-7 0l-1 1a5 5 0 007 7l1-1"/></svg>Ссылки</button>
+          <button type="button" class="admin-nav-item" data-nav="documents" id="admin-documents"><svg class="admin-nav-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><path d="M14 2v6h6M16 13H8M16 17H8M10 9H8"/></svg>Документы</button>
+          <button type="button" class="admin-nav-item" data-nav="profile" id="admin-profile"><svg class="admin-nav-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="8" r="4"/><path d="M4 20c1.5-4 6.5-4 8-4s6.5 0 8 4"/></svg>Профиль логиста</button>
           <button type="button" class="admin-nav-item" data-nav="connect-leads" id="admin-connect-leads" style="display:none">Заявки на подключение<span class="admin-filter-badge" id="admin-connect-leads-badge" hidden></span></button>
           <button type="button" class="admin-nav-item" data-nav="social" id="admin-social" style="display:none">Соцсети</button>
           <button type="button" class="admin-nav-item" data-nav="activity" id="admin-activity" style="display:none">Активность</button>
           <button type="button" class="admin-nav-item" data-nav="billing" id="admin-billing" style="display:none">Тарифы</button>
           <button type="button" class="admin-nav-item" data-nav="entitlements" id="admin-entitlements" style="display:none">Модули кабинетов</button>
           <button type="button" class="admin-nav-item" data-nav="plans" id="admin-plans" style="display:none">Планы</button>
+          <button type="button" class="admin-nav-item" data-nav="runs" id="admin-runs" style="display:none">Ход работы</button>
         </nav>
         <div class="admin-sidebar-foot">
           <button type="button" class="admin-nav-item ghost" id="admin-help">Помощь</button>
@@ -591,21 +664,34 @@
       </aside>
       <button type="button" class="admin-sidebar-backdrop" id="admin-sidebar-backdrop" aria-label="Закрыть меню" hidden></button>
       <div class="admin-main">
+        <div class="admin-super-cabinet-bar" id="admin-super-cabinet-bar" hidden></div>
         <header class="admin-topbar">
-          <button type="button" class="admin-menu-toggle" id="admin-menu-toggle" aria-label="Меню">☰</button>
+          <button type="button" class="admin-menu-toggle" id="admin-menu-toggle" aria-label="Меню"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16"></path></svg></button>
+          <div class="admin-topbar-brand" id="admin-topbar-brand" aria-hidden="true">
+            <span class="admin-topbar-brand-armada">АРМАДА</span>
+            <span class="admin-topbar-brand-sub" id="admin-topbar-brand-sub">Кабинет</span>
+          </div>
           <h1 id="admin-title">Парк</h1>
           <div class="park-ex-switch" id="admin-park-ex" role="tablist" aria-label="Парк или биржа">
             <button type="button" class="on" data-park-ex="park" id="admin-goto-park">Парк</button>
             <button type="button" data-park-ex="exchange" id="admin-goto-exchange">Биржа</button>
           </div>
-          <button type="button" class="admin-top-notify" id="admin-notify-toggle" title="Уведомления о входящих заявках">🔔</button>
+          <button type="button" class="admin-top-settings" id="admin-cabinet-settings-btn" aria-label="Настройки кабинета" title="Настройки кабинета" hidden>
+            <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>
+          </button>
+          <button type="button" class="admin-top-notify" id="admin-notify-toggle" title="Уведомления о входящих заявках" aria-label="Уведомления о входящих">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 8a6 6 0 0112 0c0 7 3 9 3 9H3s3-2 3-9M10 21h4"></path></svg>
+            <span class="admin-top-notify-count" id="admin-notify-count" hidden></span>
+          </button>
           <button type="button" class="admin-top-cta" id="admin-new">+ Заказ</button>
         </header>
         <div class="admin-orders-view-bar">
           <div class="admin-view-toggle" id="admin-orders-view-toggle" role="tablist" aria-label="Вид заказов">
             <button type="button" data-orders-view="list">Список</button>
             <button type="button" data-orders-view="kanban" class="on">Канбан</button>
+            <button type="button" data-orders-view="timeline">Лента дня</button>
           </div>
+          <button type="button" class="admin-kanban-inbox-link" id="admin-kanban-inbox-link" hidden></button>
         </div>
         <div class="filters" id="admin-filters">
           <button data-filter="all" class="on">Все</button>
@@ -632,7 +718,8 @@
         <h1>Новый заказ</h1>
       </header>
       <div class="admin-form-scroll">
-        <div class="cust-form-blocks admin-order-blocks">
+        <div class="cust-form-blocks admin-order-blocks admin-order-wide-root">
+          <div class="admin-order-wide-span">
           <div class="cust-form-block" data-admin-step="basis">
             <div class="cust-form-block-head">1. Основание</div>
             <div class="cust-form-block-body">
@@ -648,6 +735,9 @@
               <select id="create-own-company"></select>
             </div>
           </div>
+          </div>
+          <div class="admin-order-wide-cols">
+          <div class="admin-order-wide-main">
           <div class="cust-form-block" data-admin-step="customer">
             <div class="cust-form-block-head">2. Заказчик</div>
             <div class="cust-form-block-body">
@@ -745,6 +835,59 @@
               </fieldset>
             </div>
           </div>
+          <div class="cust-form-block" data-admin-step="price">
+            <div class="cust-form-block-head">7. Цены</div>
+            <div class="cust-form-block-body">
+              <div id="create-price-preview" class="schedule-box"></div>
+              <label for="create-pricing-mode">Вид оплаты</label>
+              <select id="create-pricing-mode">
+                <option value="shift">Смена — пакет из тарифа</option>
+                <option value="hourly">Почасовая — по факту, не ниже минималки</option>
+                <option value="trip">Рейс — фикс в заявке</option>
+              </select>
+              <div id="create-pricing-trip-fields" style="display:none">
+                <label for="create-trip-price">Цена за рейс в заявке, ₽</label>
+                <input id="create-trip-price" inputmode="decimal" placeholder="стоимость рейса" />
+                <div class="form-triple">
+                  <div>
+                    <label for="create-trip-km-limit">Лимит км</label>
+                    <input id="create-trip-km-limit" inputmode="numeric" placeholder="необяз." />
+                  </div>
+                  <div>
+                    <label for="create-trip-load-min">Лимит погрузки, мин</label>
+                    <input id="create-trip-load-min" inputmode="numeric" placeholder="необяз." />
+                  </div>
+                  <div>
+                    <label for="create-trip-unload-min">Лимит выгрузки, мин</label>
+                    <input id="create-trip-unload-min" inputmode="numeric" placeholder="необяз." />
+                  </div>
+                </div>
+              </div>
+              <div id="create-pricing-shift-fields">
+                <label for="create-shift-code">Пакет смены</label>
+                <select id="create-shift-code">
+                  <option value="3+1">3+1</option>
+                  <option value="4+1">4+1</option>
+                  <option value="5+1">5+1</option>
+                  <option value="7+1" selected>7+1</option>
+                  <option value="8+1">8+1</option>
+                </select>
+              </div>
+              <p class="hint" id="create-pricing-hourly-hint" style="display:none">Минимум часов — из тарифа перевозчика (работа+подача).</p>
+              <div class="form-pair">
+                <div>
+                  <label for="create-price-client">Цена для заказчика, ₽</label>
+                  <input id="create-price-client" inputmode="decimal" placeholder="сумма" />
+                </div>
+                <div>
+                  <label for="create-price-carrier">Цена для перевозчика, ₽</label>
+                  <input id="create-price-carrier" inputmode="decimal" placeholder="сумма" />
+                </div>
+              </div>
+            </div>
+          </div>
+          </div>
+          <div class="admin-order-wide-aside">
           <div class="cust-form-block" data-admin-step="exec">
             <div class="cust-form-block-head">6. Исполнение</div>
             <div class="cust-form-block-body">
@@ -790,21 +933,7 @@
               <div id="create-exchange-hint" class="hint" style="display:none">Штатный логист сначала закрывает свои машины. Остаток — на биржу: там вы заказчик перевозки, партнёр везёт. Для грузоотправителя исполнителем остаётесь вы. Маржа — цена заказчику минус цена перевозчику.</div>
             </div>
           </div>
-          <div class="cust-form-block" data-admin-step="price">
-            <div class="cust-form-block-head">7. Цены</div>
-            <div class="cust-form-block-body">
-              <div id="create-price-preview" class="schedule-box"></div>
-              <div class="form-pair">
-                <div>
-                  <label for="create-price-client">Цена для заказчика, ₽</label>
-                  <input id="create-price-client" inputmode="decimal" placeholder="сумма" />
-                </div>
-                <div>
-                  <label for="create-price-carrier">Цена для перевозчика, ₽</label>
-                  <input id="create-price-carrier" inputmode="decimal" placeholder="сумма" />
-                </div>
-              </div>
-            </div>
+          </div>
           </div>
         </div>
       </div>
@@ -931,17 +1060,17 @@
     </div>
   </div>
 
-  <div id="admin-profile-screen" class="screen">
-    <div class="admin-form-shell">
+  <div id="admin-profile-screen" class="screen adm-profile-ui-v2">
+    <div class="admin-form-shell adm-profile-shell">
       <header class="form-topbar">
         <button type="button" class="form-back" id="profile-back">← Назад</button>
         <h1 id="admin-profile-title">Профиль логиста</h1>
       </header>
-      <div class="admin-form-scroll" id="admin-profile-form"></div>
+      <div class="admin-form-scroll adm-profile-scroll" id="admin-profile-form"></div>
     </div>
   </div>
 
-  <div id="admin-docs-screen" class="screen">
+  <div id="admin-docs-screen" class="screen adm-docs-ui-v2">
     <div class="admin-form-shell adm-docs-shell">
       <header class="form-topbar">
         <button type="button" class="form-back" id="docs-back">← Назад</button>
@@ -962,13 +1091,23 @@
     </div>
   </div>
 
+  <div id="admin-runs-screen" class="screen">
+    <div class="admin-form-shell">
+      <header class="form-topbar">
+        <button type="button" class="form-back" id="runs-back">← Назад</button>
+        <h1>Ход работы</h1>
+      </header>
+      <div class="admin-form-scroll" id="runs-form"></div>
+    </div>
+  </div>
+
   <div id="admin-plans-screen" class="screen">
     <div class="admin-form-shell admin-plans-shell">
       <header class="form-topbar">
         <button type="button" class="form-back" id="plans-back">← Назад</button>
         <h1>Планы разработки</h1>
       </header>
-      <p class="cat-panel-hint plans-hint">Дорожные карты по ролям. ✅ готово · 🟡 в работе · ⬜ не начато. Источник: <code>docs/plans/</code></p>
+      <p class="cat-panel-hint plans-hint">Сценарии — сквозные цепочки и статусы прогонов. Планы — дорожные карты. Источник: <code>docs/plans-scenario-chains.json</code>, <code>docs/plans/</code></p>
       <div class="plans-layout">
         <nav class="plans-nav" id="plans-nav" aria-label="Разделы планов"></nav>
         <div class="admin-form-scroll plans-scroll" id="plans-scroll">
@@ -1049,8 +1188,9 @@
     </div>
   </div>
 </div>
-  <script src="/armada-build.js?v=2026-10-06-owner-drv-2"></script>
+  <script src="/armada-build.js?v=2026-10-19-fix409"></script>
+  <script src="/guest-landing-redirect.js?v=2026-10-17-delta-save"></script>
   <script src="/entry-route.js"></script>
-  <script src="/boot-loader.js?v=2026-10-06-owner-drv-2"></script>
+  <script src="/boot-loader.js?v=2026-10-19-fix409"></script>
 </body>
 </html>

@@ -1,0 +1,48 @@
+/* Единый логотип АРМАДА (как на landing.html) */
+.armada-wordmark{
+  display:inline-flex;align-items:center;gap:12px;text-decoration:none;color:inherit;
+  min-height:44px;vertical-align:middle;
+}
+.armada-wordmark-icon{
+  flex:none;width:38px;height:38px;border-radius:10px;
+  background:var(--accent,#E01F26);
+  display:grid;place-items:center;
+  box-shadow:0 4px 20px color-mix(in srgb,var(--accent,#E01F26) 38%,transparent);
+}
+.armada-wordmark-icon img,.armada-wordmark-icon svg{
+  display:block;width:22px;height:22px;
+}
+.armada-wordmark-name{
+  font-weight:800;letter-spacing:.08em;font-size:1.125rem;line-height:1;
+  color:var(--rl-ink,var(--text,#17181B));
+}
+.armada-wordmark--on-dark .armada-wordmark-name{color:#F3F3F1}
+.armada-wordmark--splash{align-items:center;flex-direction:column;gap:16px}
+.armada-wordmark--splash .armada-wordmark-name{font-size:1.35rem;letter-spacing:.12em}
+.auth-panel .armada-wordmark{margin-bottom:8px}
+.auth-panel .armada-wordmark-icon{width:44px;height:44px;border-radius:12px}
+.landing-brand.armada-wordmark .armada-wordmark-name{color:#F3F3F1;font-size:1rem}
+
+/* Заставка загрузки */
+#splash.show{background:var(--rl-sheet,var(--bg0,#F3F3F1))}
+.splash-shell{
+  display:flex;flex-direction:column;align-items:center;justify-content:center;
+  gap:0;min-height:min(100dvh,100%);padding:24px 20px;
+}
+.splash-progress{
+  width:min(260px,72vw);height:3px;margin-top:32px;border-radius:999px;
+  background:color-mix(in srgb,var(--rl-line,var(--border,#E2E2DE)) 80%,transparent);
+  overflow:hidden;
+}
+.splash-progress-bar{
+  display:block;height:100%;width:42%;border-radius:inherit;
+  background:var(--accent,#E01F26);
+  animation:splashProgressSlide 1.15s ease-in-out infinite;
+}
+@keyframes splashProgressSlide{
+  0%{transform:translateX(-110%)}
+  100%{transform:translateX(320%)}
+}
+@media (prefers-reduced-motion:reduce){
+  .splash-progress-bar{animation:none;width:100%;opacity:.85}
+}

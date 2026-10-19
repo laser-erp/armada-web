@@ -157,7 +157,10 @@ function compressDocPhotoFile(file, maxKb){
 }
 function docPhotoOrNull(v){
   const s=v!=null?String(v):'';
-  return s.startsWith('data:image/')?s:null;
+  if(s.startsWith('data:image/')) return s;
+  if(/^https?:\/\//i.test(s)) return s;
+  if(s.startsWith('/api/files/')) return s;
+  return null;
 }
 function adminDocImageOrNull(v){
   return docPhotoOrNull(v);
@@ -331,7 +334,7 @@ function refreshDriverDocsWarnBox(el, driverName, firmId){
 }
 function canEditDriverRecord(d){
   if(!d||!currentAdmin) return false;
-  if(typeof isSuperAdmin==='function'&&isSuperAdmin()) return true;
+  if(typeof adminSuperUiActive==='function'&&adminSuperUiActive()) return true;
   const myCo=typeof currentOwnCompany==='function'?currentOwnCompany():null;
   return d.ownerAdminId===currentAdmin.id || (myCo&&d.companyId===myCo.id);
 }
@@ -426,6 +429,13 @@ function normalizeCompany(c){
   if(typeof globalThis!=='undefined'&&globalThis.armadaFleetRates&&globalThis.armadaFleetRates.normalizeCompanyPolicies){
     globalThis.armadaFleetRates.normalizeCompanyPolicies(out);
   }
+  if(Array.isArray(c.ratesByType)&&c.ratesByType.length){
+    const FR=globalThis.armadaFleetRates;
+    out.ratesByType=c.ratesByType.map(x=>FR&&FR.normalizeRatesByTypeEntry?FR.normalizeRatesByTypeEntry(x):x).filter(Boolean);
+  }
+  if(typeof globalThis!=='undefined'&&globalThis.armadaFleetRates&&globalThis.armadaFleetRates.normalizeCompanyRatesByType){
+    globalThis.armadaFleetRates.normalizeCompanyRatesByType(out);
+  }
   return out;
 }
 /** Перевозчик на ОСН с НДС или без (УСН и т.п.) */
@@ -438,6 +448,19 @@ function companyVatPayerLabel(co){
 /** Форма оплаты перевозчику для заявки заказчика */
 function customerCarrierPaymentForm(carrier){
   return companyVatPayer(carrier)==='vat'?'withVat':'withoutVat';
+}
+const VAT_MARKUP=0.22;   // с НДС = без НДС + 22%
+const CASH_DISCOUNT=0.08; // нал = без НДС − 8%
+function fillRatesFrom(form, amount){
+  let without;
+  if(form==='withoutVat') without=amount;
+  else if(form==='withVat') without=amount/(1+VAT_MARKUP);
+  else without=amount/(1-CASH_DISCOUNT);
+  return {
+    withVat: round2(without*(1+VAT_MARKUP)),
+    withoutVat: round2(without),
+    cash: round2(without*(1-CASH_DISCOUNT))
+  };
 }
 /** База перевозчика без ставки логиста (из расчёта заказчика). */
 function customerCarrierBaseCash(quote){
@@ -505,7 +528,7 @@ function carrierSpaceIdForPortalOrder(carrier, customerCo){
     if(sp&&sp.id) return sp.id;
     if(carrier.spaceId) return carrier.spaceId;
   }
-  return (customerCo&&customerCo.spaceId)||null;
+  return null;
 }
 function ownerAdminForSpaceId(spaceId){
   if(!spaceId) return null;
@@ -517,6 +540,17 @@ function ownerAdminForSpaceId(spaceId){
 function isCanonicalOwnCompany(co){
   if(!co||!co.id) return false;
   return (state.spaces||[]).some(sp=>sp.ownCompanyId===co.id);
+}
+/** Дубликат space в companies[] (имя кабинета, не контрагент). */
+function isSpaceShadowCompany(c){
+  if(!c||!c.spaceId) return false;
+  const sp=(state.spaces||[]).find(s=>s.id===c.spaceId);
+  if(!sp) return false;
+  if(sp.ownCompanyId===c.id) return false;
+  const cn=String(c.name||'').trim().toLowerCase();
+  const sn=String(sp.name||'').trim().toLowerCase();
+  if(!cn||cn!==sn) return false;
+  return companyHasRole(c,'own')&&!companyHasRole(c,'carrier')&&!companyHasRole(c,'customer');
 }
 function spaceForCanonicalOwnCompany(co){
   if(!co||!co.id) return null;
@@ -532,7 +566,7 @@ function catalogViewSpaceId(){
 }
 /** Супер-админ смотрит справочник всех кабинетов сразу (не один кабинет). */
 function catalogAllCabinetsOpen(){
-  return typeof isSuperAdmin==='function'&&isSuperAdmin()&&(state.adminOwnerFilter||'all')==='all';
+  return typeof adminSuperUiActive==='function'&&adminSuperUiActive();
 }
 /** «Наши фирмы» в текущем фильтре справочника. */
 function catalogOwnCompaniesInView(){
@@ -578,6 +612,39 @@ function inferTripMode(km, fin){
   if(km>suburb) return 'suburb';
   return 'city';
 }
+function quotePricingNow(draft){
+  const raw=draft&&(draft.vehicleAt||draft.createdAt);
+  if(raw){
+    const d=new Date(raw);
+    if(!isNaN(d.getTime())) return d;
+  }
+  return new Date();
+}
+function orderPricingModeLocal(order){
+  if(!order||typeof order!=='object') return 'shift';
+  const raw=String(order.orderPricingMode||order.pricingMode||'').trim().toLowerCase();
+  if(raw==='trip'||raw==='hourly'||raw==='shift') return raw;
+  const tp=order.tripPrice??order.fixedTripPrice??order.pricePerTrip;
+  const n=tp!=null?+tp:NaN;
+  if(n>0) return 'trip';
+  return 'shift';
+}
+/** Смена по тарифу (7+1 и т.п.), не дефолт «без режима» для legacy-почасовки. */
+function orderHasExplicitShiftPricing(order){
+  if(!order||typeof order!=='object') return false;
+  const raw=String(order.orderPricingMode||order.pricingMode||'').trim().toLowerCase();
+  if(raw==='shift') return true;
+  if(raw==='trip'||raw==='hourly') return false;
+  return !!String(
+    order.cityShiftCode||order.carrierShiftCode||order.shiftPackageCode||order.shiftOptionCode||''
+  ).trim();
+}
+function fleetOrderQuoteMeta(fr, co, draft, km){
+  if(!fr||!co||typeof fr.calculateOrderPrice!=='function') return null;
+  const veh=fr.vehicleForOrderPricing?fr.vehicleForOrderPricing(draft, co.id):null;
+  if(!veh) return null;
+  return fr.calculateOrderPrice(veh, co, draft, {distanceKm:km>0?km:null, now:quotePricingNow(draft)});
+}
 function suggestCustomerOrderPrice(draft){
   if(!draft||!draft.ownCompanyId) return null;
   const fin=financeForCompanyId(draft.ownCompanyId);
@@ -585,6 +652,23 @@ function suggestCustomerOrderPrice(draft){
   const trip=draft.tripMode||inferTripMode(km, fin);
   const tariffPick=typeof findTariffRuleForOrder==='function'?findTariffRuleForOrder(draft, fin):null;
   if(tariffPick&&tariffPick.missingRate){
+    const s=normalizeFinance(tariffPick.finance||fin);
+    const perKmFallback=(+s.defaultRatePerKmCash)||80;
+    const kmRateFallback=(trip==='intercity' && +s.ratePerKmOutsideKad>0)?+s.ratePerKmOutsideKad:perKmFallback;
+    if(trip==='intercity' && km>0 && kmRateFallback>0){
+      const kmCash=round2(km*kmRateFallback);
+      const t=fillRatesFrom('cash', kmCash);
+      return {
+        minimumCash:kmCash,
+        cash:t.cash,
+        withoutVat:t.withoutVat,
+        withVat:t.withVat,
+        summary:`межгород ${km} км × ${fmt(kmRateFallback)} ₽/км`,
+        tariffMissing:true,
+        tripMode:trip,
+        routeKm:km||null
+      };
+    }
     return {
       minimumCash:0,
       cash:0,
@@ -600,6 +684,69 @@ function suggestCustomerOrderPrice(draft){
   const mult=(tariffPick&&tariffPick.ruleId)?1:quoteBodyCargoMultiplier(draft, fin);
   const perKm=(+typeFin.defaultRatePerKmCash)||80;
   const kmRate=(trip==='intercity' && +typeFin.ratePerKmOutsideKad>0)?+typeFin.ratePerKmOutsideKad:perKm;
+  const fr=typeof globalThis!=='undefined'?globalThis.armadaFleetRates:null;
+  if(fr&&trip!=='intercity'&&draft.ownCompanyId){
+    const co=findCompanyById(draft.ownCompanyId);
+    const hasOwnFleetTariff=!!(co&&(
+      co.ratesCorrectedByOwner||
+      (Array.isArray(co.ratesByType)&&co.ratesByType.some(r=>r&&(r.companyOverride||co.ratesCorrectedByOwner)))
+    ));
+    const explicitFleetPricing=!!(
+      (draft.tripPrice!=null&&+draft.tripPrice>0)||
+      String(draft.orderPricingMode||draft.pricingMode||'').trim()||
+      String(draft.cityShiftCode||draft.carrierShiftCode||draft.shiftPackageCode||draft.shiftOptionCode||'').trim()
+    );
+    const mode=fr.orderPricingMode?fr.orderPricingMode(draft):null;
+    const fleetDraft=Object.assign({}, draft, {tripMode:'city', routeDistanceKm:km>0?km:null});
+    const fleetBase=fr.carrierBaseForOrder&&co&&(hasOwnFleetTariff||explicitFleetPricing)
+      ?fr.carrierBaseForOrder(fleetDraft, co):null;
+    if(fleetBase>0&&(mode==='trip'||mode==='hourly'||mode==='shift'||draft.tripPrice>0)){
+      let pricedBase=fleetBase;
+      let displayBase=fleetBase;
+      let urgencyMult=1;
+      let tags=[];
+      let surchargeLabels=[];
+      if(fr.calculateOrderPrice&&co){
+        const veh=fr.vehicleForOrderPricing?fr.vehicleForOrderPricing(fleetDraft, co.id):null;
+        if(veh){
+          const fq=fr.calculateOrderPrice(veh, co, fleetDraft, {distanceKm:km>0?km:null, now:quotePricingNow(draft)});
+          if(fq&&fq.total>0){
+            pricedBase=fq.total;
+            urgencyMult=+(fq.multiplier)||1;
+            tags=fq.tags||[];
+            surchargeLabels=fq.surchargeLabels||[];
+            if(fq.base>0) displayBase=fq.base;
+          }
+        }
+      }
+      let total=round2(pricedBase*mult);
+      const extras=[];
+      if(mult>1.001) extras.push(`надбавка кузов/груз/тоннаж ×${mult}`);
+      if(surchargeLabels.length) extras.push(surchargeLabels.join(', '));
+      const feePct=draft.fulfillment==='direct'?0:(+fin.logistFeePercent||0);
+      if(feePct>0){
+        total=round2(total*(1+feePct/100));
+        extras.push(`ставка логиста ${feePct}%`);
+      }
+      const modeLabel=mode==='trip'?'рейс':mode==='hourly'?'почасовая':'смена';
+      const t=fillRatesFrom('cash', total);
+      return {
+        minimumCash:total,
+        cash:t.cash,
+        withoutVat:t.withoutVat,
+        withVat:t.withVat,
+        summary:`[${modeLabel}] ${fmt(displayBase)} ₽`+(extras.length?' · '+extras.join(', '):''),
+        recommendedCash:total,
+        tripMode:trip,
+        routeKm:km||null,
+        multiplier:mult*urgencyMult,
+        base:displayBase,
+        tags,
+        surchargeLabels,
+        logistFeePercent:feePct
+      };
+    }
+  }
   let base=null;
   const cityDraft=Object.assign({}, draft, {
     tripMode:trip==='intercity'?'intercity':'city',
@@ -621,6 +768,23 @@ function suggestCustomerOrderPrice(draft){
     total=round2(total*(1+feePct/100));
     extras.push(`ставка логиста ${feePct}%`);
   }
+  let legacyTags=[];
+  let legacySurchargeLabels=[];
+  let legacyUrgencyMult=1;
+  let legacyDisplayBase=null;
+  const legacyFq=fleetOrderQuoteMeta(fr, findCompanyById(draft.ownCompanyId), draft, km);
+  if(legacyFq&&legacyFq.total>0){
+    legacyUrgencyMult=+(legacyFq.multiplier)||1;
+    legacyTags=legacyFq.tags||[];
+    legacySurchargeLabels=legacyFq.surchargeLabels||[];
+    if(legacyFq.base>0) legacyDisplayBase=legacyFq.base;
+  }
+  if(fr&&(!legacyTags.length)&&draft&&(draft.pricingUrgency||draft.vehicleAt)){
+    const coLegacy=findCompanyById(draft.ownCompanyId);
+    legacyTags=fr.urgencyTagsForOrder(draft, coLegacy, quotePricingNow(draft))||[];
+    if(fr.surchargeLabelsFromTags) legacySurchargeLabels=fr.surchargeLabelsFromTags(legacyTags);
+    else if(legacyTags.length) legacySurchargeLabels=legacyTags.map(t=>String(t));
+  }
   const t=fillRatesFrom('cash', total);
   return {
     minimumCash:total,
@@ -631,7 +795,10 @@ function suggestCustomerOrderPrice(draft){
     recommendedCash:total,
     tripMode:trip,
     routeKm:km||null,
-    multiplier:mult,
+    multiplier:mult*legacyUrgencyMult,
+    base:legacyDisplayBase,
+    tags:legacyTags,
+    surchargeLabels:legacySurchargeLabels,
     logistFeePercent:feePct
   };
 }
@@ -667,6 +834,9 @@ function buildCreateDraftFromForm(){
   }else if(mode==='own'&&driver&&ownCo){
     driverPct=driverPercent(driver, ownCo.id);
   }
+  const pricingMode=(($('create-pricing-mode')||{}).value)||'shift';
+  const tripPrice=numOrNull(($('create-trip-price')||{}).value);
+  const shiftCode=String((($('create-shift-code')||{}).value)||'7+1').trim();
   return {
     ownCompanyId:ownId||null,
     estimateKm:km,
@@ -685,7 +855,13 @@ function buildCreateDraftFromForm(){
     driverPercent:driverPct,
     carrierCompanyId:carrierCoId,
     ratePerKmCash:fin.defaultRatePerKmCash,
-    ratePerHourWork:fin.defaultRatePerHourWork
+    ratePerHourWork:fin.defaultRatePerHourWork,
+    orderPricingMode:pricingMode==='trip'||pricingMode==='hourly'||pricingMode==='shift'?pricingMode:'shift',
+    cityShiftCode:shiftCode||'7+1',
+    tripPrice:tripPrice>0?Math.round(tripPrice):null,
+    tripKmLimit:numOrNull(($('create-trip-km-limit')||{}).value),
+    tripLoadingMinutesLimit:numOrNull(($('create-trip-load-min')||{}).value),
+    tripUnloadingMinutesLimit:numOrNull(($('create-trip-unload-min')||{}).value)
   };
 }
 function createOrderCostPreview(draft){
@@ -748,7 +924,11 @@ function suggestDispatcherOrderPrice(draft){
     logistFeePercent:feePct,
     tariffMin:tariffMin||null,
     costRecommended:costRec||null,
-    costs
+    costs,
+    tags:tariff&&tariff.tags||[],
+    surchargeLabels:tariff&&tariff.surchargeLabels||[],
+    multiplier:tariff&&tariff.multiplier,
+    base:tariff&&tariff.base
   };
 }
 function createCarrierForPrice(draft){
@@ -898,7 +1078,40 @@ function companyInMySpace(c){
   }
   const sid=currentSpaceId();
   if(!sid) return !c.spaceId;
-  return !c.spaceId || c.spaceId===sid;
+  return c.spaceId===sid;
+}
+function inferCustomerCompanySpaceId(co){
+  if(!co) return null;
+  if(co.spaceId) return co.spaceId;
+  const id=String(co.id||'').trim();
+  if(id.startsWith('staging-customer-')) return 'staging-space';
+  const cid=co.id;
+  const name=String(co.name||'').trim().toLowerCase();
+  if(!name&&!cid) return null;
+  const counts=new Map();
+  (state.orders||[]).forEach(o=>{
+    if(!o||!o.spaceId) return;
+    const on=String(o.customer||'').trim().toLowerCase();
+    const match=(cid&&o.customerId===cid)||(name&&on===name);
+    if(match) counts.set(o.spaceId,(counts.get(o.spaceId)||0)+1);
+  });
+  let best=null;
+  let bestN=0;
+  counts.forEach((n,sid)=>{ if(n>bestN){ bestN=n; best=sid; } });
+  return best;
+}
+function migrateCustomerPartnerSpaceIds(){
+  let changed=false;
+  (state.companies||[]).forEach(c=>{
+    if(!companyHasRole(c,'customer')||companyHasRole(c,'own')) return;
+    const sid=inferCustomerCompanySpaceId(c);
+    if(sid&&c.spaceId!==sid){
+      c.spaceId=sid;
+      changed=true;
+    }
+  });
+  if(changed&&typeof syncCustomersFromCompanies==='function') syncCustomersFromCompanies();
+  return changed;
 }
 function companiesByRole(role){ return (state.companies||[]).filter(c=>companyHasRole(c, role) && companyInMySpace(c)); }
 function findCompanyById(id){ return (state.companies||[]).find(c=>c.id===id)||null; }
@@ -1034,9 +1247,64 @@ function normalizeAdmin(a){
   const signature=adminDocImageOrNull(a.signatureDataUrl);
   if(signature) out.signatureDataUrl=signature;
   if(a.skipDriverMirror) out.skipDriverMirror=true;
+  let role=String(a.role||'').trim().toLowerCase();
+  if(role==='logist'||role==='логист') role='agent';
+  if(role==='broker'||role==='staff') role='dispatcher';
+  if(!role||role==='admin'||role==='super') role=a.isSuper?'dispatcher':'agent';
+  if(role!=='dispatcher'&&role!=='agent'&&role!=='customer') role='agent';
+  out.role=role;
+  if(a.companyId) out.companyId=String(a.companyId).trim();
+  if(role==='agent'){
+    let mp=+a.markupPercent;
+    if(Number.isNaN(mp)) mp=+(state.finance&&state.finance.markupPercent)||15;
+    out.markupPercent=Math.min(80, Math.max(0, mp));
+    const mt=String(a.markupType||'percent').trim().toLowerCase();
+    out.markupType=mt==='fixed'?'fixed':mt==='by_type'?'by_type':'percent';
+  }
   return out;
 }
-function isSuperAdmin(){ return !!(currentAdmin&&currentAdmin.isSuper); }
+function currentAdminPricingRole(){
+  const a=currentAdmin;
+  const r=String(a&&a.role||'').trim().toLowerCase();
+  if(r==='dispatcher'||r==='agent'||r==='customer') return r;
+  return a&&a.isSuper?'dispatcher':'agent';
+}
+function adminMarkupForCurrent(){
+  const a=currentAdmin||{};
+  const fin=state.finance||{};
+  const mt=String(a.markupType||'percent').trim().toLowerCase();
+  const type=mt==='fixed'?'fixed':mt==='by_type'?'by_type':'percent';
+  const val=+(a.markupPercent!=null?a.markupPercent:fin.markupPercent)||15;
+  return {type, value:val};
+}
+function clientPriceFromCarrier(carrier, role, markup){
+  const c=Math.round(+carrier||0);
+  if(!(c>0)) return null;
+  const r=role||currentAdminPricingRole();
+  if(r==='dispatcher') return c;
+  if(r==='customer') return c;
+  const m=markup||adminMarkupForCurrent();
+  if(m.type==='fixed') return Math.round(c+(+m.value||0));
+  if(m.type==='by_type') return Math.round(c*(1+(+m.value||0)/100));
+  return Math.round(c*(1+(+m.value||0)/100));
+}
+function syncOrderPricingFields(o){
+  if(!o||typeof o!=='object') return false;
+  let changed=false;
+  const price=numOrNull(o.price)!=null?numOrNull(o.price):numOrNull(o.priceForClient);
+  const carrierPrice=numOrNull(o.carrierPrice)!=null?numOrNull(o.carrierPrice):numOrNull(o.priceForCarrier);
+  if(price!=null&&o.price!==price){ o.price=price; changed=true; }
+  if(price!=null&&o.priceForClient!==price){ o.priceForClient=price; changed=true; }
+  if(carrierPrice!=null&&o.carrierPrice!==carrierPrice){ o.carrierPrice=carrierPrice; changed=true; }
+  if(carrierPrice!=null&&o.priceForCarrier!==carrierPrice){ o.priceForCarrier=carrierPrice; changed=true; }
+  const cid=o.carrierId||o.carrierCompanyId||o.ownCompanyId||null;
+  if(cid&&o.carrierId!==cid){ o.carrierId=cid; changed=true; }
+  if(price!=null&&carrierPrice!=null){
+    const margin=Math.round((price-carrierPrice)*100)/100;
+    if(o.margin!==margin){ o.margin=margin; changed=true; }
+  }
+  return changed;
+}
 function driversOwnedByAdminId(adminId){
   if(!adminId) return [];
   return (state.drivers||[]).filter(d=>d.ownerAdminId===adminId);
@@ -1077,6 +1345,15 @@ function orderBelongsToAdmin(o, adminId){
 }
 function isMyFirmOrder(o){
   if(!o || !currentAdmin) return false;
+  if(typeof superAdminCabinetViewActive==='function'&&superAdminCabinetViewActive()){
+    const co=typeof currentOwnCompany==='function'?currentOwnCompany():null;
+    if(co&&o.ownCompanyId===co.id) return true;
+    const sid=typeof catalogViewSpaceId==='function'?catalogViewSpaceId():null;
+    if(sid&&typeof orderSpaceId==='function'&&orderSpaceId(o)===sid){
+      return orderBelongsToAdmin(o, currentAdmin.id);
+    }
+    return false;
+  }
   return orderBelongsToAdmin(o, currentAdmin.id);
 }
 /** Чей парк показывать и назначать текущему админу (не чужой firm по ownCompanyId заказа). */
@@ -1238,7 +1515,7 @@ function isPartnerOnOrder(o){
 /** Доступ: супер — любой; биржа — всем админам; иначе только свои (owner/space фирмы) / партнёр. */
 function canAdminSeeOrder(o){
   if(!o || !currentAdmin) return false;
-  if(isSuperAdmin()) return true;
+  if(typeof adminSuperUiActive==='function'&&adminSuperUiActive()) return true;
   if(o.onExchange && !o.closedAt && o.startOdometer==null) return true;
   if(isPartnerOnOrder(o)) return true;
   // Обычный админ — только заказы своей зоны, не «чужой owner с чужим space»
@@ -1411,17 +1688,26 @@ function matchesOwnerFilter(o){
   if(f==='_none') return !sid;
   return sid===f;
 }
-/** Название фирмы водителя для UI (companyName → company → space → админ). */
+const DRIVER_DOCS_CHECK_COUNT=9;
+function driverDocsBadgeHtml(miss){
+  if(!miss||!miss.length) return '<span class="drv-docs-badge ok">док. ок</span>';
+  const filled=Math.max(0, DRIVER_DOCS_CHECK_COUNT-miss.length);
+  const title=miss.map(m=>String(m).replace(/"/g,'&quot;')).join(', ');
+  return `<span class="drv-docs-badge info" title="${title}">Заполнено ${filled} из ${DRIVER_DOCS_CHECK_COUNT}</span>`;
+}
+/** Название фирмы водителя для UI (company по id → companyName → space → админ). */
 function driverCompanyLabel(d){
   if(!d) return '';
-  const cn=String(d.companyName||'').trim();
-  if(cn) return cn;
   const cid=d.companyId||null;
   if(cid){
     const co=findCompanyById(cid);
     if(co&&(co.name||'').trim()) return String(co.name).trim();
   }
+  const cn=String(d.companyName||'').trim();
+  if(cn) return cn;
   if(d.spaceId){
+    const oc=typeof ownCompanyForSpaceId==='function'?ownCompanyForSpaceId(d.spaceId):null;
+    if(oc&&(oc.name||'').trim()) return String(oc.name).trim();
     const sp=findSpaceById(d.spaceId);
     if(sp&&(sp.name||'').trim()) return String(sp.name).trim();
   }
@@ -1606,12 +1892,26 @@ function resolveAdminOwner(adminId){
 function migrateCompanies(){
   // customers → companies
   (state.customers||[]).forEach(c=>{
-    if(!findCompanyByName(c.name)){
+    const cid=String(c.id||'').trim();
+    let spaceId=c.spaceId||null;
+    if(!spaceId&&cid.startsWith('staging-customer-')) spaceId='staging-space';
+    const byId=cid?(state.companies||[]).find(x=>x.id===cid):null;
+    const byName=!byId&&findCompanyByName(c.name);
+    if(!byId&&!byName){
       upsertCompany({
-        name:c.name, roles:['customer'],
+        id:cid||undefined,
+        name:c.name,
+        roles:['customer'],
+        spaceId,
         loadingAddresses:c.loadingAddresses||[], unloadingAddresses:c.unloadingAddresses||[],
         contacts:c.contacts||[], phones:c.phones||[]
       });
+    } else {
+      const hit=byId||byName;
+      if(hit&&!hit.spaceId&&spaceId){
+        hit.spaceId=spaceId;
+        upsertCompany(hit);
+      }
     }
   });
   state.companies=(state.companies||[]).map(normalizeCompany).filter(Boolean);
@@ -1669,6 +1969,7 @@ function migrateCompanies(){
       upsertCompany(existing);
     }
   });
+  migrateCustomerPartnerSpaceIds();
   syncCustomersFromCompanies();
   // if still empty companies, mine from orders
   if(!state.companies.length){
@@ -1809,6 +2110,27 @@ function maskTimeHmInput(raw){
   if(v.length<=2) return v;
   return `${v.slice(0,2)}:${v.slice(2)}`;
 }
+/** Ввод времени ещё не завершён — не нормализовать в 01:00 / 01:43 при чтении из DOM. */
+function isTimeHmInputInProgress(raw){
+  const t=String(raw||'').trim();
+  if(!t) return false;
+  if(/^\d{2}:\d{2}$/.test(t)) return false;
+  if(/^\d{1,2}:\d{2}$/.test(t)) return false;
+  const digits=t.replace(/\D/g,'');
+  if(/^\d{4}$/.test(digits)) return false;
+  if(/^\d{3}$/.test(digits) && /^\d+$/.test(t)) return false;
+  if(/^\d{2}:\d{1}$/.test(t)) return true;
+  if(/^\d{1,2}$/.test(digits)) return true;
+  if(/^\d{1}:\d?$/.test(t)) return true;
+  return false;
+}
+/** Время для ISO при чтении поля: null = ввод не завершён. */
+function timeHmForVehicleAtRead(raw){
+  const t=String(raw||'').trim();
+  if(!t) return '';
+  if(isTimeHmInputInProgress(t)) return null;
+  return normalizeTimeHmInput(t);
+}
 function fromRuDateTimeParts(dateStr, timeStr){
   const d=parseRuDate(dateStr);
   if(!d) return null;
@@ -1835,9 +2157,9 @@ function readVehicleAtFromDom(prefix){
   const timeEl=$(`${prefix}-vehicle-time`);
   if(dateEl||timeEl){
     const tRaw=(timeEl||{}).value;
-    const tNorm=normalizeTimeHmInput(tRaw);
-    if(timeEl && tNorm && tNorm!==tRaw) timeEl.value=tNorm;
-    return fromRuDateTimeParts((dateEl||{}).value, tNorm||tRaw);
+    const tResolved=timeHmForVehicleAtRead(tRaw);
+    if(tResolved===null) return null;
+    return fromRuDateTimeParts((dateEl||{}).value, tResolved);
   }
   const legacy=$(`${prefix}-vehicle-at`);
   if(legacy) return fromDatetimeLocalValue(legacy.value);
@@ -1904,7 +2226,7 @@ function updateCreateFreeHint(){
   el.textContent=`Ориентир освобождения: ${formatRuDateTimeAt(free)} (подача + ${minW} ч работы)`;
 }
 migrateCompanies();
-migrateAdmins();
+if(typeof migrateAdmins==='function') migrateAdmins();
 migrateDriverOwners();
 function fillCustomerPickers(){
   $('create-customer')&&($('create-customer').oninput=()=>{
@@ -2169,6 +2491,170 @@ function armadaConfirm(opts){
     setTimeout(()=>{ try{ okBtn&&okBtn.focus(); }catch(_){} }, 0);
   });
 }
+function armadaPromptReasonEnsureOverlay(){
+  let el=$('armada-prompt-reason-overlay');
+  if(el) return el;
+  document.body.insertAdjacentHTML('beforeend', `<div id="armada-prompt-reason-overlay" class="armada-confirm-overlay" hidden>
+    <div class="armada-confirm-panel" role="dialog" aria-modal="true" aria-labelledby="armada-prompt-reason-title">
+      <h2 class="armada-confirm-title" id="armada-prompt-reason-title">Причина отмены</h2>
+      <p class="armada-confirm-message" id="armada-prompt-reason-hint">Укажите причину. Если оставить пустым — подставится текст по умолчанию.</p>
+      <label class="armada-prompt-reason-label" for="armada-prompt-reason-input">Причина</label>
+      <textarea id="armada-prompt-reason-input" class="armada-prompt-reason-input" rows="3" maxlength="500" placeholder="Например: заказчик отказался"></textarea>
+      <div class="armada-confirm-actions" style="margin-top:12px">
+        <button type="button" class="secondary" id="armada-prompt-reason-cancel">Не отменять</button>
+        <button type="button" class="primary" id="armada-prompt-reason-ok">Отменить заказ</button>
+      </div>
+    </div>
+  </div>`);
+  return $('armada-prompt-reason-overlay');
+}
+/** Диалог причины отмены заказа: null — пользователь отказался; иначе непустая строка (пустое поле → defaultReason). */
+function promptOrderCancelReason(defaultReason){
+  const def=String(defaultReason||'Отменён').trim()||'Отменён';
+  const overlay=armadaPromptReasonEnsureOverlay();
+  const input=$('armada-prompt-reason-input');
+  const okBtn=$('armada-prompt-reason-ok');
+  const cancelBtn=$('armada-prompt-reason-cancel');
+  if(input){
+    input.value=def;
+    armadaApplyMobileEnterKeyHints(overlay);
+  }
+  overlay.hidden=false;
+  document.body.classList.add('armada-confirm-open');
+  return new Promise(resolve=>{
+    const done=v=>{ overlay.hidden=true; document.body.classList.remove('armada-confirm-open'); resolve(v); };
+    const onOk=()=>{
+      const raw=input?String(input.value||'').trim():'';
+      cleanup();
+      done(raw||def);
+    };
+    const onCancel=()=>{ cleanup(); done(null); };
+    const onKey=e=>{ if(e.key==='Escape'){ e.preventDefault(); onCancel(); } };
+    function cleanup(){
+      if(okBtn) okBtn.onclick=null;
+      if(cancelBtn) cancelBtn.onclick=null;
+      overlay.onclick=null;
+      document.removeEventListener('keydown', onKey);
+    }
+    if(okBtn) okBtn.onclick=onOk;
+    if(cancelBtn) cancelBtn.onclick=onCancel;
+    overlay.onclick=e=>{ if(e.target===overlay) onCancel(); };
+    document.addEventListener('keydown', onKey);
+    setTimeout(()=>{ try{ input&&input.focus(); input&&input.select(); }catch(_){} }, 0);
+  });
+}
+function currentAdminCancelActor(){
+  const a=typeof currentAdmin!=='undefined'?currentAdmin:null;
+  if(!a||!a.id) return null;
+  const name=String(a.name||a.phone||'').trim()||String(a.id);
+  let role=String(a.role||'').trim().toLowerCase();
+  if(typeof isSuperAdmin==='function'&&isSuperAdmin()) role='super';
+  else if(!role||role==='admin'||role==='super') role='agent';
+  return {id:a.id, name, role};
+}
+function currentCustomerCancelActor(){
+  const c=typeof currentCustomer!=='undefined'?currentCustomer:null;
+  if(!c||!c.companyId) return null;
+  const name=String(c.name||c.companyName||c.displayName||'Заказчик').trim()||'Заказчик';
+  return {id:c.companyId, name, role:'customer'};
+}
+function currentDriverCancelActor(){
+  const who=typeof DRIVER!=='undefined'?String(DRIVER||'').trim():'';
+  if(!who) return null;
+  const rec=typeof findDriverRecord==='function'?findDriverRecord(who, typeof DRIVER_COMPANY_ID!=='undefined'?DRIVER_COMPANY_ID:null):null;
+  const id=rec&&rec.id?rec.id:who;
+  return {id, name:who, role:'driver'};
+}
+/** Единая запись отмены на объекте заказа (без UI и persist). */
+function applyOrderCancellation(o, opts){
+  if(!o||typeof o!=='object') return false;
+  const options=opts&&typeof opts==='object'?opts:{};
+  const reason=String(options.reason!=null?options.reason:(o.cancelReason||'Отменён')).trim()||'Отменён';
+  const at=options.at||o.cancelledAt||(o.closedAt&&o.cancelReason?o.closedAt:null)||(o.transportApp&&o.transportApp.cancelledAt)||new Date().toISOString();
+  let changed=false;
+  if(!o.cancelledAt){ o.cancelledAt=at; changed=true; }
+  if(String(o.cancelReason||'').trim()!==reason){ o.cancelReason=reason; changed=true; }
+  const by=options.cancelledBy;
+  if(by&&(by.id||by.name)){
+    const prev=o.cancelledBy||{};
+    const next={id:by.id||prev.id||'', name:String(by.name||prev.name||'').trim(), role:String(by.role||prev.role||'').trim()};
+    if(prev.id!==next.id||prev.name!==next.name||prev.role!==next.role){ o.cancelledBy=next; changed=true; }
+  }
+  if(options.cancellationPenalty!=null&&o.transportApp&&typeof o.transportApp==='object'){
+    if(o.transportApp.cancellationPenalty!==options.cancellationPenalty){ o.transportApp.cancellationPenalty=options.cancellationPenalty; changed=true; }
+  }
+  const cancelTa=options.cancelTransportApp!==false;
+  if(cancelTa&&o.transportApp&&typeof o.transportApp==='object'&&!o.transportApp.cancelledAt){
+    o.transportApp.cancelledAt=at;
+    changed=true;
+  }
+  if(options.bookStatusCancelled!==false){
+    const bookish=o.bookStatus==='confirmed'||o.bookStatus==='requested'||o.bookStatus==='cancelled';
+    if(bookish&&o.bookStatus!=='cancelled'){ o.bookStatus='cancelled'; changed=true; }
+  }
+  if(o.onExchange){ o.onExchange=false; changed=true; }
+  if(o.cancelled){ delete o.cancelled; changed=true; }
+  return changed||!!o.cancelledAt;
+}
+/** Старые/частичные отмены (bookStatus, transportApp, closedAt+cancelReason) → cancelledAt. */
+function healOrderCancellationCanonical(o){
+  if(!o||o.cancelledAt) return false;
+  const partial=!!(o.closedAt&&o.cancelReason)||o.bookStatus==='cancelled'||(o.transportApp&&o.transportApp.cancelledAt);
+  if(!partial) return false;
+  const at=(o.transportApp&&o.transportApp.cancelledAt)||(o.closedAt&&o.cancelReason?o.closedAt:null)||new Date().toISOString();
+  applyOrderCancellation(o,{at, reason:o.cancelReason||'Отменён', cancelTransportApp:true, bookStatusCancelled:true});
+  return true;
+}
+function cancelOrderFromExchangeSigned(order, opts){
+  if(!order) return false;
+  const penalty=opts&&opts.penalty!=null?opts.penalty:null;
+  const reason=opts&&opts.reason?opts.reason:'Отменён при принятии срочной заявки с биржи';
+  const actor=typeof currentAdminCancelActor==='function'?currentAdminCancelActor():null;
+  applyOrderCancellation(order,{reason, cancelledBy:actor, cancellationPenalty:penalty, cancelTransportApp:true, bookStatusCancelled:true});
+  return true;
+}
+function cancelOrderForCustomer(orderId, reason){
+  const o=(state.orders||[]).find(x=>x&&x.id===orderId);
+  if(!o) return false;
+  if(typeof currentCustomer!=='undefined'&&currentCustomer){
+    if(String(o.customerId||'')!==String(currentCustomer.companyId||'')) return false;
+  }
+  if(o.startOdometer!=null&&!o.cancelledAt) return false;
+  applyOrderCancellation(o,{reason:reason||'Отменён заказчиком', cancelledBy:typeof currentCustomerCancelActor==='function'?currentCustomerCancelActor():null});
+  bumpDataEpoch('cancelOrderCustomer');
+  if(typeof persistCustomerPortalOrderImmediate==='function') persistCustomerPortalOrderImmediate(orderId);
+  else if(typeof persist==='function') persist();
+  return true;
+}
+function cancelOrderForDriver(orderId, reason){
+  const o=(state.orders||[]).find(x=>x&&x.id===orderId);
+  if(!o) return false;
+  if(typeof orderBelongsToDriver==='function'&&!orderBelongsToDriver(o)) return false;
+  if(o.startOdometer!=null&&!o.cancelledAt){
+    if(typeof confirm==='function'&&!confirm('Заказ уже в работе. Точно отменить?')) return false;
+  }
+  applyOrderCancellation(o,{reason:reason||'Отменён водителем', cancelledBy:typeof currentDriverCancelActor==='function'?currentDriverCancelActor():null});
+  bumpDataEpoch('cancelOrderDriver');
+  if(typeof persist==='function') persist();
+  return true;
+}
+function orderCancelDisplayAt(o){
+  if(!o) return '';
+  return o.cancelledAt||(o.closedAt&&o.cancelReason?o.closedAt:'')||'';
+}
+function formatOrderCancelAdminLine(o){
+  if(!o) return '';
+  const cancelled=!!(o.cancelledAt||(o.closedAt&&o.cancelReason));
+  if(!cancelled) return '';
+  const when=orderCancelDisplayAt(o);
+  const whenStr=when&&typeof dateTime==='function'?dateTime(when):'';
+  const reason=String(o.cancelReason||'Отменён').trim()||'Отменён';
+  const who=o.cancelledBy&&String(o.cancelledBy.name||'').trim();
+  if(who&&whenStr) return `Отменён ${whenStr}, ${who}: ${reason}`;
+  if(who) return `Отменён, ${who}: ${reason}`;
+  if(whenStr) return `Отменён ${whenStr}: ${reason}`;
+  return `Отменён: ${reason}`;
+}
 function armadaApplyMobileEnterKeyHints(root){
   root=root||document;
   if(!root.querySelectorAll) return;
@@ -2212,6 +2698,7 @@ function armadaUserFacingError(msg){
   if(low==='rate_limited'||low==='rate limited') return 'Слишком много попыток — подождите минуту';
   if(low==='bad_payload'||low==='bad payload') return 'Неверные данные для сервера';
   if(low==='remote_ahead'||low==='remote ahead') return 'На сервере уже более новая версия — обновите страницу';
+  if(low==='order_already_exists') return 'Заказ уже сохранён на сервере';
   if(low==='auth_failed'||low==='auth failed') return 'Не удалось войти — попробуйте позже';
   if(low==='read_failed') return 'Не удалось загрузить данные с сервера';
   if(low==='write_failed') return 'Не удалось сохранить на сервере';
@@ -2554,12 +3041,14 @@ function normalizeFleetVehicle(v){
   if(v.catalogCorrectedByOwner) out.catalogCorrectedByOwner=true;
   if(v.catalogBenchmark&&typeof v.catalogBenchmark==='object') out.catalogBenchmark=v.catalogBenchmark;
   if(v.crane&&typeof v.crane==='object') out.crane=v.crane;
-  if(v.rates&&typeof v.rates==='object') out.rates=v.rates;
+  if(v.rates===null) out.rates=null;
+  else if(v.rates&&typeof v.rates==='object') out.rates=v.rates;
   if(v.schedule&&typeof v.schedule==='object') out.schedule=v.schedule;
   if(v.location&&typeof v.location==='object') out.location=v.location;
   if(v.rating&&typeof v.rating==='object') out.rating=v.rating;
   if(typeof globalThis!=='undefined'&&globalThis.armadaFleetRates&&globalThis.armadaFleetRates.normalizeVehicleFleetMeta){
-    globalThis.armadaFleetRates.normalizeVehicleFleetMeta(out);
+    if(out.rates===null) globalThis.armadaFleetRates.normalizeVehicleFleetMeta(Object.assign({}, out, {rates:null}));
+    else globalThis.armadaFleetRates.normalizeVehicleFleetMeta(out);
   }
   return out;
 }
@@ -2954,6 +3443,57 @@ function orderNeverStartedTrip(o){
   return !!(o && o.startOdometer==null && o.departOdometer==null);
 }
 /** Есть признаки закрытия, даже если closedAt снёс sync. */
+/** Адрес погрузки/выгрузки (как при «Повторить» у логиста). */
+function orderAddressByKind(o, kind){
+  if(!o) return '';
+  if(kind==='loading' && o.loadingAddress) return String(o.loadingAddress).trim();
+  if(kind==='unloading' && o.unloadingAddress) return String(o.unloadingAddress).trim();
+  const pts=Array.isArray(o.routePoints)?o.routePoints:[];
+  const hit=pts.find(p=>p&&p.address&&p.kind===kind);
+  return hit?String(hit.address).trim():'';
+}
+/**
+ * Поля для «Повторить» (логист create + портал /z): груз, маршрут, контакты, кузов, способы, комментарии.
+ * Без даты подачи, цен, номера, статусов и документов.
+ */
+function orderRepeatSourceFields(o){
+  if(!o) return null;
+  return {
+    loadingAddress:orderAddressByKind(o,'loading'),
+    unloadingAddress:orderAddressByKind(o,'unloading'),
+    loadingContactName:o.loadingContactName||'',
+    loadingContactPhone:o.loadingContactPhone||'',
+    unloadingContactName:o.unloadingContactName||'',
+    unloadingContactPhone:o.unloadingContactPhone||'',
+    contactName:o.contactName||'',
+    contactPhone:o.contactPhone||'',
+    cargoDescription:o.cargoDescription||'',
+    cargoKind:o.cargoKind||'',
+    reqPayloadTons:o.reqPayloadTons??'',
+    reqLengthM:o.reqLengthM??'',
+    reqWidthM:o.reqWidthM??'',
+    reqHeightM:o.reqHeightM??'',
+    loadingAddressNote:o.loadingAddressNote||'',
+    unloadingAddressNote:o.unloadingAddressNote||'',
+    vehicleTypeIds:Array.isArray(o.vehicleTypeIds)?o.vehicleTypeIds.slice():[],
+    loadingMethods:Array.isArray(o.loadingMethods)?o.loadingMethods.slice():[],
+    unloadingMethods:Array.isArray(o.unloadingMethods)?o.unloadingMethods.slice():[],
+    loadMatchAll:!!o.loadMatchAll,
+    unloadMatchAll:!!o.unloadMatchAll,
+    cargoPlaces:o.cargoPlaces??'',
+    cargoVolumeM3:o.cargoVolumeM3??'',
+    cargoPackaging:o.cargoPackaging||'',
+    cargoFragile:!!o.cargoFragile,
+    cargoTempFromC:o.cargoTempFromC??'',
+    cargoTempToC:o.cargoTempToC??'',
+    cargoWeightKg:o.cargoWeightKg??'',
+    shipperSameAsCustomer:o.shipperSameAsCustomer!==false,
+    shipperName:o.shipperName||'',
+    shipperInn:o.shipperInn||'',
+    shipperPhone:o.shipperPhone||'',
+    cargoItems:Array.isArray(o.cargoItems)?o.cargoItems.map(it=>({...it})):[]
+  };
+}
 function looksClosedOrder(o){
   if(!o||o.cancelledAt) return false;
   if(typeof isUnassignedPortalOrder==='function' && isUnassignedPortalOrder(o)) return false;
@@ -2965,6 +3505,15 @@ function looksClosedOrder(o){
   if(o.endOdometer!=null && o.emptyKmAfter!=null && o.startOdometer!=null && o.loadedKm!=null) return true;
   if(o.loadedKm!=null && o.emptyKmAfter!=null && o.startOdometer!=null && o.endOdometer!=null) return true;
   return false;
+}
+/** Отмена заказа (не путать с looksClosedOrder — отменённые не «закрыты»). */
+function orderCancelled(o){
+  return !!(o && (o.cancelledAt || o.cancelled || (o.closedAt && o.cancelReason)));
+}
+/** Заказ держит карточку «смена/день открыт» в кабинете логиста. */
+function orderBlocksOpenShiftGroup(o){
+  if(!o || orderCancelled(o)) return false;
+  return !looksClosedOrder(o);
 }
 /** Одометр на выгрузке введён, финальное закрытие ещё не завершено. */
 function orderAwaitingFinalize(o){
@@ -3071,15 +3620,28 @@ function enRouteOrder(){
 function hasOpenOrder(){ return !!(inProgressOrder()||enRouteOrder()); }
 /** Назначен, ещё не выехал */
 function assignedPending(){
-  return (state.orders||[]).filter(o=>!looksClosedOrder(o) && !o.cancelledAt && o.startOdometer==null && !orderEnRouteToLoading(o) && !o.onExchange && orderBelongsToDriver(o));
+  return (state.orders||[]).filter(o=>!looksClosedOrder(o) && !orderCancelled(o) && o.startOdometer==null && !orderEnRouteToLoading(o) && !o.onExchange && orderBelongsToDriver(o));
 }
 function awaitingArrive(){
   if(typeof syncDriverOrderCopiesFromShifts==='function') syncDriverOrderCopiesFromShifts();
   return (state.orders||[]).filter(o=>orderEnRouteToLoading(o)&&orderBelongsToDriver(o));
 }
-function upsertOrder(order){
-  if(!order||!order.id) return;
+function rollbackNewOrderLocal(orderId){
+  const oid=String(orderId||'').trim();
+  if(!oid) return;
+  state.orders=(state.orders||[]).filter(o=>o&&o.id!==oid);
+  (state.shifts||[]).forEach(s=>{
+    if(Array.isArray(s.orders)) s.orders=s.orders.filter(o=>o&&o.id!==oid);
+  });
+  if(state.shift&&Array.isArray(state.shift.orders)){
+    state.shift.orders=state.shift.orders.filter(o=>o&&o.id!==oid);
+  }
+  if(typeof persistLocalOnly==='function') persistLocalOnly();
+}
+async function upsertOrder(order){
+  if(!order||!order.id) return { ok:false, err:'no_order' };
   const i=state.orders.findIndex(o=>o.id===order.id);
+  const isNew=i<0;
   if(i>=0) state.orders[i]=order; else state.orders.unshift(order);
   let linked=false;
   state.shifts.forEach(s=>{
@@ -3100,7 +3662,39 @@ function upsertOrder(order){
     }
   }
   rememberCustomer(order);
+  if(typeof persistLocalOnly==='function') persistLocalOnly();
+  else persist();
+  const customerPortalUpsert=(function(){
+    try{
+      if(typeof currentAdmin!=='undefined'&&currentAdmin) return false;
+      if(typeof armadaCustomerPortalActive==='function'&&armadaCustomerPortalActive()) return true;
+      if(typeof currentCustomer!=='undefined'&&currentCustomer) return true;
+    }catch(_){}
+    return false;
+  })();
+  if(navigator.onLine===false){
+    if(!customerPortalUpsert&&typeof persist==='function') persist();
+    return { ok:false, offline:true, err:'offline' };
+  }
+  if(typeof persistAdminOrderImmediate==='function'&&typeof currentAdmin!=='undefined'&&currentAdmin){
+    const r=await persistAdminOrderImmediate(order, { isNew });
+    if(!r||!r.ok){
+      if(isNew) rollbackNewOrderLocal(order.id);
+      const msg=r&&r.message?String(r.message):'';
+      const errObj=r&&r.err?r.err:null;
+      const errMsg=errObj&&errObj.message?String(errObj.message):'';
+      return {
+        ok:false,
+        offline:!!(r&&r.offline),
+        err:r&&r.err?r.err:'push_failed',
+        message:msg||errMsg||'Не удалось сохранить заказ на сервере',
+      };
+    }
+    return { ok:true };
+  }
+  if(customerPortalUpsert) return { ok:true, portalLocalOnly:true };
   persist();
+  return { ok:true };
 }
 function orderById(id){ return id?(state.orders||[]).find(o=>o.id===id)||null:null; }
 /** Бумажная ТН или ЭТрН. Без явного поля: заказчик=ГО → бумажная ТН; иначе ЭТрН. */
@@ -3126,7 +3720,7 @@ function orderBeingClosed(){
 }
 /** Текущий заказ на закрытии (не путать с «зомби» незакрытым №1). */
 function openOrder(){ return orderBeingClosed(); }
-function allOrders(){ return (state.orders||[]).slice().sort((a,b)=>new Date(b.createdAt)-new Date(a.createdAt)); }
+// allOrders — в store.js (нужен до app.js на /a/)
 function isBookingRequested(o){
   return !!(o && String(o.bookedPlate||'').trim() && o.bookStatus==='requested');
 }
@@ -3309,8 +3903,8 @@ function healPhantomPortalTrip(o){
   return changed;
 }
 function logistMargin(o){
-  const client=+o.priceForClient||0;
-  const carr=+o.priceForCarrier||0;
+  const client=+(o.price??o.priceForClient)||0;
+  const carr=+(o.carrierPrice??o.priceForCarrier)||0;
   if(!(client>0) && !(carr>0)) return null;
   return {
     client:client||null,
@@ -3491,17 +4085,28 @@ function deleteOrders(ids){
   persist();
   return {ok:true, deleted, nextNumber:(Number(state.seq)||0)+1};
 }
-function cancelOrder(id, reason){
+async function cancelOrder(id, reason){
   const o=state.orders.find(x=>x.id===id); if(!o) return false;
+  if(typeof abortQueuedStatePush==='function') abortQueuedStatePush();
   if(currentAdmin && !canAdminSeeOrder(o)){ alert('Чужой заказ — нет доступа'); return false; }
-  if(o.closedAt && !o.cancelledAt){ alert('Заказ уже закрыт — используйте «Удалить выбранные»'); return false; }
-  if(o.startOdometer!=null && !o.cancelledAt){
+  if(o.closedAt && !orderCancelled(o)){ alert('Заказ уже закрыт — используйте «Удалить выбранные»'); return false; }
+  if(o.startOdometer!=null && !orderCancelled(o)){
     if(!confirm('Заказ уже в работе. Точно отменить?')) return false;
   }
-  o.cancelledAt=new Date().toISOString();
-  o.cancelReason=String(reason||'Отменён').trim();
+  const actor=typeof currentAdminCancelActor==='function'?currentAdminCancelActor():null;
+  applyOrderCancellation(o,{reason, cancelledBy:actor});
+  if(typeof relinkShiftOrderRefs==='function') relinkShiftOrderRefs();
   // Не removeOrdersByIds / detachOrderReferences: billing, счета, чат и № других заказов не трогаем.
   bumpDataEpoch('cancelOrder');
+  if(typeof currentAdmin!=='undefined'&&currentAdmin&&typeof persistAdminOrderImmediate==='function'){
+    const r=await persistAdminOrderImmediate(o, { isNew:false });
+    if(typeof persistLocalOnly==='function') persistLocalOnly();
+    if(!r||!r.ok){
+      console.warn('cancel order push', r&&r.message?r.message:r);
+      return false;
+    }
+    return true;
+  }
   persist();
   return true;
 }
@@ -3688,9 +4293,16 @@ function updateDriverNetHint(){
     el.textContent='Нет сети — смена и черновик сохранены на телефоне';
     return;
   }
+  if(typeof syncOwnerSubscriptionWarning!=='undefined' && syncOwnerSubscriptionWarning){
+    el.hidden=false; el.className='driver-net show';
+    el.textContent=syncOwnerSubscriptionWarning;
+    return;
+  }
   if(syncStatus==='error'){
     el.hidden=false; el.className='driver-net show bad';
-    el.textContent='Нет связи с сервером — данные на телефоне, отправим при появлении сети';
+    const custom=typeof syncLastErrorMessage!=='undefined'&&syncLastErrorMessage;
+    const human=custom?(typeof armadaUserFacingError==='function'?armadaUserFacingError(custom):custom):'';
+    el.textContent=human||'Нет связи с сервером — данные на телефоне, отправим при появлении сети';
     return;
   }
   if(typeof syncPushDegraded!=='undefined' && syncPushDegraded && syncStatus==='ok'){
@@ -4022,7 +4634,7 @@ function localDayKey(iso){
 }
 /** Есть незакрытый заказ, из‑за которого смену нельзя «забыть» автоматически. */
 function shiftHasBlockingOpenOrder(s){
-  return (s.orders||[]).some(o=>o && !o.cancelled && !o.closedAt && !looksClosedOrder(o));
+  return (s.orders||[]).some(o=>orderBlocksOpenShiftGroup(o));
 }
 /**
  * Закрыть забытую открытую смену (водитель закрыл заказы, но не нажал «Закрыть смену»).
@@ -4277,13 +4889,52 @@ function restoreOrderAssignmentIfLost(cur, snap){
   if(typeof syncOrderDocsOnAssign==='function') syncOrderDocsOnAssign(cur);
   return true;
 }
+/** Бронь и флаги линковки «до стоянки» — не затирать null с другой копии при Object.assign. */
+function snapshotOrderBookAndLink(o){
+  if(!o) return null;
+  return {
+    bookedPlate: o.bookedPlate,
+    bookStatus: o.bookStatus,
+    bookConfirmedAt: o.bookConfirmedAt,
+    bookRejectedAt: o.bookRejectedAt,
+    vehicleAt: o.vehicleAt,
+    linkEmptyAfterToNext: o.linkEmptyAfterToNext,
+    emptyAfterLinkedFromNext: o.emptyAfterLinkedFromNext,
+    emptyKmAfter: o.emptyKmAfter,
+  };
+}
+function restoreOrderBookAndLinkIfLost(cur, snap){
+  if(!cur||!snap) return;
+  const str=v=>String(v||'').trim();
+  if(str(snap.bookedPlate)||snap.bookStatus){
+    if(!str(cur.bookedPlate)&&!cur.bookStatus){
+      cur.bookedPlate=snap.bookedPlate;
+      cur.bookStatus=snap.bookStatus;
+      cur.bookConfirmedAt=snap.bookConfirmedAt;
+      cur.bookRejectedAt=snap.bookRejectedAt;
+      if(snap.vehicleAt) cur.vehicleAt=snap.vehicleAt;
+    }
+  }
+  if(snap.linkEmptyAfterToNext){
+    if(!cur.linkEmptyAfterToNext){
+      cur.linkEmptyAfterToNext=true;
+      if(snap.emptyKmAfter!=null && cur.emptyKmAfter==null) cur.emptyKmAfter=snap.emptyKmAfter;
+    }
+  }
+  if(snap.emptyAfterLinkedFromNext && !cur.emptyAfterLinkedFromNext){
+    cur.emptyAfterLinkedFromNext=true;
+    if(snap.emptyKmAfter!=null) cur.emptyKmAfter=snap.emptyKmAfter;
+  }
+}
 /** Слить две копии одного заказа (state.orders ↔ shift.orders). */
 function mergeTwoOrderCopies(cur, lo){
   if(!cur||!lo) return false;
   let changed=false;
   const keepAssign=orderAssignmentSnapshot(cur);
+  const keepBookLink=snapshotOrderBookAndLink(cur);
   if(orderProgressScore(lo)>orderProgressScore(cur)){
     Object.assign(cur, lo);
+    restoreOrderBookAndLinkIfLost(cur, keepBookLink);
     changed=true;
   } else if(mergeOrderFields(cur, lo)){
     changed=true;
@@ -4400,8 +5051,14 @@ function healOrphanOrdersIntoShifts(){
       }]);
     }
   });
-  // Канонические ссылки: shift.orders → объекты из state.orders
+  if(relinkShiftOrderRefs()) changed=true;
+  return changed;
+}
+/** shift.orders → те же объекты, что в state.orders (отмена/синк не оставляют устаревшую копию в смене). */
+function relinkShiftOrderRefs(){
+  let changed=false;
   const byId=new Map((state.orders||[]).map(o=>[o.id,o]));
+  const dead=deletedOrderIdSet();
   (state.shifts||[]).forEach(s=>{
     if(!Array.isArray(s.orders)||!s.orders.length) return;
     const next=s.orders.map(o=>{
@@ -4413,6 +5070,16 @@ function healOrphanOrdersIntoShifts(){
       changed=true;
     }
   });
+  if(state.shift&&Array.isArray(state.shift.orders)&&state.shift.orders.length){
+    const next=state.shift.orders.map(o=>{
+      if(!o||!o.id||dead.has(o.id)) return null;
+      return byId.get(o.id)||o;
+    }).filter(Boolean);
+    if(next.length!==state.shift.orders.length || next.some((o,i)=>o!==state.shift.orders[i])){
+      state.shift.orders=next;
+      changed=true;
+    }
+  }
   return changed;
 }
 /** С сервера: закрытая смена не должна снова «открываться» у логиста при push. */
@@ -4490,7 +5157,7 @@ function mergeLocalShifts(localShifts){
     // Поля ЕТО с более полной стороны (без слепого Object.assign — он сносил orders/messages)
     if(!localWeakerEto && !localWeakerFields){
       if(etoProgressScore(ls)>etoProgressScore(cur) || (!!ls.completedAt && !cur.completedAt)){
-        ['vehiclePlate','odometer','fuelLiters','gur','coolant','oil','light','completedAt',
+        ['vehiclePlate','odometer','fuelLiters','fuelPricePerLiter','etoRefueled','gur','coolant','oil','light','completedAt',
           'powerSteeringLevel','coolantLevel','engineOilLevel','fuelRemainingLiters',
           'lastOdometerPoint','parkingOdometer','driverName','ownCompanyId','ownCompanyName',
           'ownerAdminId','ownerAdminName','spaceId','lockEto'].forEach(k=>{
@@ -4557,6 +5224,8 @@ function mergeOrderFields(cur, lo){
   const prefer=[
     'departOdometer','startOdometer','endOdometer','previousOdometer',
     'emptyKmBefore','loadedKm','emptyKmAfter',
+    'linkEmptyAfterToNext','emptyAfterLinkedFromNext',
+    'bookedPlate','bookStatus','bookConfirmedAt','bookRejectedAt','vehicleAt',
     'departAt','arrivedAt','endAt','parkingAt','closedAt',
     'timeToOrderMin','timeLoadedMin','timeToParkingMin','timeTotalMin',
     'timeToOrderHours','timeLoadedHours','timeToParkingHours','timeTotalHours',
@@ -4594,7 +5263,20 @@ function mergeLocalOrders(localOrders){
   const byId=new Map((state.orders||[]).map(o=>[o.id,o]));
   const dead=deletedOrderIdSet();
   localOrders.forEach(lo=>{
-    if(!lo||!lo.id||lo.cancelledAt) return;
+    if(!lo||!lo.id) return;
+    if(lo.cancelledAt){
+      if(dead.has(lo.id)) return;
+      const curCancelled=byId.get(lo.id);
+      if(curCancelled&&!curCancelled.cancelledAt&&typeof applyOrderCancellation==='function'){
+        applyOrderCancellation(curCancelled,{
+          reason:lo.cancelReason,
+          cancelledBy:lo.cancelledBy,
+          at:lo.cancelledAt,
+        });
+        changed=true;
+      }
+      return;
+    }
     if(dead.has(lo.id)) return; // удалённый заказ не воскрешаем из localStorage
     const cur=byId.get(lo.id);
     if(!cur){
@@ -4649,6 +5331,8 @@ function mergeRemoteOrderAssignments(remote){
         if(mergeOrderAssignmentFields(cur, ro)) changed=true;
         if(healOrderDriverAssignment(cur)) changed=true;
       }
+    }else if(!roOk&&!curOk){
+      if(mergeOrderFields(cur, ro)) changed=true;
     }
   });
   return changed;
@@ -4807,6 +5491,44 @@ function syncOpenShiftRuntime(){
   return state.shift;
 }
 function dayTotal(o){ if(o.emptyKmBefore==null && o.loadedKm==null && o.emptyKmAfter==null) return null; return (o.emptyKmBefore||0)+(o.loadedKm||0)+(o.emptyKmAfter||0); }
+/** Км по заказу для таблицы логиста: сверх DRIVER_DAY_KM_MAX — не показываем (как у водителя). */
+function dayTotalForAdmin(o){
+  const t=dayTotal(o);
+  if(t==null) return null;
+  if(t>DRIVER_DAY_KM_MAX) return null;
+  return t;
+}
+function dayTotalAdminHint(o){
+  const t=dayTotal(o);
+  if(t!=null && t>DRIVER_DAY_KM_MAX) return 'проверьте одометр';
+  return '';
+}
+/** Сумма км по заказу для денег: зеркальный «после» не дублируем с «до» следующего. */
+function orderKmForLogistSum(o){
+  if(!o) return null;
+  let t;
+  if(o.emptyAfterLinkedFromNext){
+    if(o.emptyKmBefore==null && o.loadedKm==null) t=kmParkingToEnd(o);
+    else t=(o.emptyKmBefore||0)+(o.loadedKm||0);
+  } else t=dayTotal(o);
+  if(t==null) return null;
+  if(t>DRIVER_DAY_KM_MAX) return null;
+  return t;
+}
+/** Итог км за день для сумм логиста: приоритет — одометры смены (ЕТО→стоянка). */
+function sumOrdersKmMoney(list, shift){
+  if(shift && shift.odometer!=null){
+    const dk=typeof driverShiftDayKm==='function'?driverShiftDayKm(shift):null;
+    if(dk!=null) return dk;
+  }
+  let sum=0;
+  let any=false;
+  (list||[]).forEach(o=>{
+    const t=orderKmForLogistSum(o);
+    if(t!=null){ sum+=t; any=true; }
+  });
+  return any?round2(sum):0;
+}
 /** Минуты между ISO-метками; null если нет данных. */
 function minutesBetween(fromIso, toIso){
   if(!fromIso || !toIso) return null;
@@ -5107,6 +5829,7 @@ function healAllOrders(){
   });
   if(hydrateOrdersFromMessages()) changed=true;
   (state.orders||[]).forEach(o=>{
+    if(healOrderCancellationCanonical(o)) changed=true;
     if(healPhantomPortalClose(o)) changed=true;
     if(typeof healTransportAppDriver==='function'&&healTransportAppDriver(o)) changed=true;
     if(healOrderCloseState(o)) changed=true;
@@ -5114,6 +5837,7 @@ function healAllOrders(){
   });
   (state.shifts||[]).forEach(s=>{
     (s.orders||[]).forEach(o=>{
+      if(healOrderCancellationCanonical(o)) changed=true;
       if(healFalseClosedInboxOrder(o)) changed=true;
       if(healOrderCloseState(o)) changed=true;
       ensureOrderTimeStamps(o);
@@ -5141,6 +5865,15 @@ function tripKmForFuel(o){
 /** Предыдущий закрытый заказ, ждущий «до стоянки» от следующего. */
 function findOrderAwaitingEmptyAfterLink(nextOrder){
   if(!nextOrder) return null;
+  const pendingId=state.shift&&state.shift.pendingEmptyAfterOrderId;
+  if(pendingId){
+    const pending=orderById(pendingId);
+    if(pending&&pending.closedAt&&pending.endOdometer!=null
+      && pending.id!==nextOrder.id
+      && (pending.linkEmptyAfterToNext||String(pendingId)===String(pending.id))){
+      return pending;
+    }
+  }
   const plate=nextOrder.vehiclePlate||'';
   const driver=nextOrder.driverName||DRIVER||'';
   const list=(state.orders||[])
@@ -5213,19 +5946,6 @@ function clientRate(o){
   if(o.paymentForm==='cash') return o.rateCash??selectedRate(o);
   return selectedRate(o);
 }
-const VAT_MARKUP=0.22;   // с НДС = без НДС + 22%
-const CASH_DISCOUNT=0.08; // нал = без НДС − 8%
-function fillRatesFrom(form, amount){
-  let without;
-  if(form==='withoutVat') without=amount;
-  else if(form==='withVat') without=amount/(1+VAT_MARKUP);
-  else without=amount/(1-CASH_DISCOUNT);
-  return {
-    withVat: round2(without*(1+VAT_MARKUP)),
-    withoutVat: round2(without),
-    cash: round2(without*(1-CASH_DISCOUNT))
-  };
-}
 function billableKm(o, estimateOverride){
   if(o.loadedKm!=null && +o.loadedKm>0) return +o.loadedKm;
   const est=estimateOverride!=null?estimateOverride:o.estimateKm;
@@ -5266,6 +5986,26 @@ function markStaysLoadedOvernight(o){
   o.staysLoadedOvernight=true;
   o.overnightNights=(o.overnightNights>0?+o.overnightNights:0)+1;
 }
+function fleetClientTariffForOrder(o){
+  const fr=typeof globalThis!=='undefined'?globalThis.armadaFleetRates:null;
+  if(!fr||!o||!o.ownCompanyId) return null;
+  const mode=fr.orderPricingMode?fr.orderPricingMode(o):null;
+  const rawMode=String(o.orderPricingMode||o.pricingMode||'').trim().toLowerCase();
+  const useFleet=
+    mode==='trip'&&((fr.orderTripPrice&&fr.orderTripPrice(o)!=null)||rawMode==='trip')
+    ||mode==='hourly'&&rawMode==='hourly'
+    ||mode==='shift'&&orderHasExplicitShiftPricing(o);
+  if(!useFleet) return null;
+  const co=findCompanyById(o.ownCompanyId);
+  if(!co) return null;
+  const veh=fr.vehicleForOrderPricing?fr.vehicleForOrderPricing(o, o.ownCompanyId):null;
+  if(!veh) return null;
+  const km=+(o.routeKm||o.estimateKm||0)||packageKmOf(o)||0;
+  const fq=fr.calculateOrderPrice(veh, co, o, {distanceKm:km>0?km:null, now:quotePricingNow(o)});
+  if(!fq||!(fq.total>0)) return null;
+  const modeLabel=mode==='trip'?'рейс':mode==='hourly'?'почасовая':'смена';
+  return {fq, modeLabel};
+}
 /**
  * Тариф клиенту:
  * — мин. N ч работы + 1 ч подачи (пакет = обычно 5 ч);
@@ -5274,13 +6014,26 @@ function markStaysLoadedOvernight(o){
  * — часы/км сверх пакета плюсуем по факту; ночное хранение сверху.
  */
 function calculateClientTariff(o, fin){
+  const storageCash=overnightStorageCash(o);
+  const fleetBreak=fleetClientTariffForOrder(o);
+  if(fleetBreak){
+    const {fq, modeLabel}=fleetBreak;
+    const totalCash=round2(fq.total+storageCash);
+    const parts=[`[${modeLabel}] ${fmt(fq.base)} ₽`];
+    if(fq.surchargeLabels&&fq.surchargeLabels.length) parts.push(fq.surchargeLabels.join(', '));
+    if(storageCash>0) parts.push(`хранение ${o.overnightNights}×${fmt(o.overnightStorageRateCash)} = ${fmt(storageCash)} ₽`);
+    return {
+      totalCash, storageCash, isCity:packageKmOf(o)>0,
+      packageKm:packageKmOf(o), excessKm:0, podachaHoursCharged:0, podachaCoveredByHour:true,
+      summary:parts.join(' + ')||'—'
+    };
+  }
   const base=Object.assign({}, DEFAULT_FINANCE, fin||state.finance||{});
   const typeId=typeof tariffTypeIdForOrder==='function'?tariffTypeIdForOrder(o):'';
   const hasType=!!(typeId&&base.byType&&base.byType[typeId]);
   const s=hasType&&typeof financeForOrderType==='function'?financeForOrderType(o, base):base;
   const perKm=hasType?(+s.defaultRatePerKmCash||80):((o.ratePerKmCash>0?+o.ratePerKmCash:+s.defaultRatePerKmCash)||80);
   const perHour=hasType?(+s.defaultRatePerHourWork||0):((o.ratePerHourWork>0?+o.ratePerHourWork:+s.defaultRatePerHourWork)||0);
-  const storageCash=overnightStorageCash(o);
   if(!(perKm>0||perHour>0||storageCash>0)) return null;
   const emptyBefore=o.emptyKmBefore||0;
   const packageKm=packageKmOf(o);
@@ -5343,6 +6096,14 @@ function calculateClientTariff(o, fin){
   };
 }
 function applyClientTariff(o){
+  if(orderHasExplicitShiftPricing(o)&&orderPricingModeLocal(o)==='shift'){
+    const cash=+(o.rateCash??0);
+    if(cash>0){
+      if(!o.paymentForm) o.paymentForm='cash';
+      o.freight=selectedRate(o);
+      return true;
+    }
+  }
   const b=calculateClientTariff(o, financeForOrder(o));
   if(!b) return applyPerKmCash(o);
   const t=fillRatesFrom('cash', b.totalCash);
@@ -5362,38 +6123,13 @@ function applyPerKmCash(o){
   return true;
 }
 /**
- * После смены тарифа фирмы — пересчитать цены заказов этой фирмы,
- * включая закрытые. Ставки ₽/ч и ₽/км — из тарифа фирмы.
+ * Правило 12.10: тариф перевозчика меняют после завершения открытых заказов;
+ * новый тариф — только для заказов, созданных после смены. Уже созданные не пересчитываем.
+ * Ручной пересчёт в карточке — applyClientTariff / updatePerKmPreview.
  */
 function recalculateOrderTariffsForCompany(companyId){
-  if(!companyId) return 0;
-  const fin=financeForCompanyId(companyId);
-  const dead=deletedOrderIdSet();
-  let updated=0;
-  (state.orders||[]).forEach(o=>{
-    if(!o || !o.id || o.cancelledAt || dead.has(o.id)) return;
-    if(o.ownCompanyId!==companyId) return;
-    const typeFin=typeof financeForOrderType==='function'?financeForOrderType(o, fin):fin;
-    if(typeFin.defaultRatePerHourWork>0) o.ratePerHourWork=+typeFin.defaultRatePerHourWork;
-    if(typeFin.defaultRatePerKmCash>0) o.ratePerKmCash=+typeFin.defaultRatePerKmCash;
-    try{ recomputeOrderTimes(ensureOrderTimeStamps(o)); }catch(_){}
-    if(!(o.workHours>0) && o.timeLoadedHours>0) o.workHours=+o.timeLoadedHours;
-    else if(!(o.workHours>0) && o.estimateWorkHours>0) o.workHours=+o.estimateWorkHours;
-    const before={
-      cash:o.rateCash, noVat:o.rateWithoutVat, vat:o.rateWithVat, freight:o.freight
-    };
-    if(!applyClientTariff(o)) return;
-    const pay=metrics(o).driverPay;
-    o.earnings=pay!=null?pay:null;
-    const changed=before.cash!==o.rateCash || before.noVat!==o.rateWithoutVat
-      || before.vat!==o.rateWithVat || before.freight!==o.freight;
-    if(changed) updated++;
-  });
-  const byId=new Map((state.orders||[]).map(o=>[o.id,o]));
-  (state.shifts||[]).forEach(s=>{
-    (s.orders||[]).forEach((o,idx)=>{ const live=byId.get(o.id); if(live) s.orders[idx]=live; });
-  });
-  return updated;
+  void companyId;
+  return 0;
 }
 function recalculateAllOrderTariffs(){
   // совместимость: пересчёт по всем нашим фирмам
@@ -5488,9 +6224,19 @@ function totalCostAtRate(rate, fuelCost, rent, driverPercent, bonus){
   const cush=rate*0.1;
   return round2((fuelCost||0)+rent+pay+cush);
 }
+/** Км в metrics(): у закрытого заказа — как dayTotal (все участки), иначе tripKmForFuel. */
+function metricsTripKm(o){
+  if(o && o.closedAt){
+    const t=dayTotal(o);
+    if(t!=null) return t>DRIVER_DAY_KM_MAX?null:t;
+  }
+  const k=tripKmForFuel(o);
+  if(k!=null && k>DRIVER_DAY_KM_MAX) return null;
+  return k;
+}
 function metrics(o){
   const cons=vehicle(o.vehiclePlate, o.ownCompanyId).consumptionPer100Km;
-  const km=kmParkingToEnd(o);
+  const km=metricsTripKm(o);
   const fuelLitersCalc=km==null?null:round2(km*cons/100);
   const price=o.fuelPricePerLiter;
   const fuelCostCalc=(fuelLitersCalc!=null && price!=null)?round2(fuelLitersCalc*price):(o.fuelTotalCost??null);
@@ -5613,9 +6359,61 @@ function wireDriverLoginHandlers(){
     };
   }
 }
+async function tryRestoreRoleHubSession(){
+  if(typeof isRoleHubUrl!=='function'||!isRoleHubUrl()) return false;
+  const tokenRole=typeof armadaApiTokenRole==='function'?armadaApiTokenRole():'';
+  const tokenOk=typeof armadaApiTokenUsable==='function'&&armadaApiTokenUsable();
+  const goOwnerUrl=()=>{
+    try{
+      if(sessionStorage.getItem('armada_owner_driver_session_v1')==='1'&&tokenOk&&tokenRole==='owner_driver'){
+        location.replace('/o/');
+        return true;
+      }
+    }catch(_){}
+    return false;
+  };
+  const openCustomer=async()=>{
+    if(typeof restoreCustomerSession!=='function'||!restoreCustomerSession()) return false;
+    try{
+      if(typeof ensureCustomerPortalApiToken==='function') await ensureCustomerPortalApiToken();
+      await initCloudSync();
+    }catch(_){}
+    if(typeof showCustomerPortal==='function') showCustomerPortal();
+    return true;
+  };
+  const openAdmin=async()=>{
+    if(typeof canAutoRestoreAdmin!=='function'||!canAutoRestoreAdmin()) return false;
+    try{ await initCloudSync(); }catch(_){}
+    show('admin');
+    if(typeof renderAdmin==='function') renderAdmin();
+    if(window.ArmadaOnboarding) ArmadaOnboarding.maybeAdmin();
+    return true;
+  };
+  const openDriver=async()=>{
+    if(typeof restoreDriverSession!=='function'||!restoreDriverSession()) return false;
+    const rec=findDriverRecord(DRIVER, DRIVER_COMPANY_ID)||findDriverRecord(DRIVER, null);
+    if(!rec){ clearDriverSession(); return false; }
+    await enterAsDriver(rec);
+    return true;
+  };
+  if(tokenOk&&tokenRole==='owner_driver'){
+    if(typeof restoreOwnerDriverSession==='function'&&restoreOwnerDriverSession()) return true;
+    if(goOwnerUrl()) return true;
+  }
+  if(tokenOk&&tokenRole==='customer'&&await openCustomer()) return true;
+  if(tokenOk&&tokenRole==='admin'&&await openAdmin()) return true;
+  if(tokenOk&&tokenRole==='driver'&&await openDriver()) return true;
+  if(await openAdmin()) return true;
+  if(await openCustomer()) return true;
+  if(await openDriver()) return true;
+  if(goOwnerUrl()) return true;
+  return false;
+}
 function showDefaultAfterSplash(){
   if(typeof isRoleHubUrl==='function' && isRoleHubUrl()){
-    showRoleHub();
+    void tryRestoreRoleHubSession().then(restored=>{
+      if(!restored) armadaGoPublicLanding();
+    });
     return;
   }
   if(typeof isDedicatedEntryUrl==='function' && isDedicatedEntryUrl()){
@@ -5635,7 +6433,7 @@ function bootMigrationSnapshotSig(){
 /** Миграции при старте: dataEpoch и persist только если данные реально изменились. */
 function runArmadaBootMigrations(){
   const sigBefore=bootMigrationSnapshotSig();
-  migrateAdmins();
+  if(typeof migrateAdmins==='function') migrateAdmins();
   migrateDriverOwners();
   migrateSpaces();
   migrateDriverOrderOwners();
@@ -5675,9 +6473,13 @@ function runArmadaBootMigrations(){
   const onRoleHub=typeof isRoleHubUrl==='function' && isRoleHubUrl();
   if(urlEntry==='customer'){
     initPortalScopeFromPage();
+    if(typeof armadaSyncEntryBranding==='function') armadaSyncEntryBranding();
     const custRestored=typeof restoreCustomerSession==='function'&&restoreCustomerSession();
     if(custRestored){
-      try{ await initCloudSync(); }catch(_){}
+      try{
+        if(typeof ensureCustomerPortalApiToken==='function') await ensureCustomerPortalApiToken();
+        await initCloudSync();
+      }catch(_){}
       if(typeof showCustomerPortal==='function') showCustomerPortal();
     }else if(typeof openCustomerLogin==='function') openCustomerLogin();
   } else if(urlEntry==='driver'){
@@ -5691,9 +6493,10 @@ function runArmadaBootMigrations(){
       if(window.ArmadaOnboarding) ArmadaOnboarding.maybeAdmin();
     }else openDedicatedEntryScreen();
   } else if(onRoleHub || !urlEntry){
-    if(!document.querySelector('#roles.show') && !isArmadaEntryScreenVisible()){
-      if(typeof finishSplashOnce==='function') finishSplashOnce(showRoleHub);
-      else showRoleHub();
+    const restored=await tryRestoreRoleHubSession();
+    if(!restored&&!isArmadaEntryScreenVisible()){
+      if(typeof finishSplashOnce==='function') finishSplashOnce(armadaGoPublicLanding);
+      else armadaGoPublicLanding();
     }
   } else if(!(await tryDriver())){
     if(!document.querySelector('#admin.show') && !document.querySelector('#admin-pin.show') && !document.querySelector('#driver.show') && !document.querySelector('#driver-login.show') && !document.querySelector('#customer-login.show')){
@@ -5729,15 +6532,32 @@ function runArmadaBootMigrations(){
     }
     if(document.querySelector('#splash.show') && !isArmadaEntryScreenVisible() && !window.__armadaSplashDone){
       if(typeof finishSplashOnce==='function') finishSplashOnce(typeof bootFallbackAfterSplash==='function'?bootFallbackAfterSplash:showRoleHub);
-      else if(typeof show==='function' && !(typeof isDedicatedEntryUrl==='function' && isDedicatedEntryUrl())) show('roles');
+      else if(!(typeof isDedicatedEntryUrl==='function' && isDedicatedEntryUrl())) armadaGoPublicLanding();
     }
   }
 })();
+function adminRecordForDriverNav(){
+  if(!currentAdmin) return null;
+  return (state.admins||[]).find(a=>a.id===currentAdmin.id)||null;
+}
+function adminDriverMirrorStatus(){
+  if(typeof ownerDriverMirrorStatusForAdmin!=='function') return {rec:null, reason:'no_admin'};
+  return ownerDriverMirrorStatusForAdmin(adminRecordForDriverNav());
+}
+/** Этап 2.7: переход логиста/супера в кабинет собственника из /a/ отключён — только /o/. */
+function syncAdminAsDriverNav(){
+  const btn=$('admin-as-driver');
+  if(!btn) return;
+  btn.hidden=true;
+  btn.style.display='none';
+  btn.setAttribute('aria-hidden','true');
+}
+/** Legacy: раньше открывал /v/ по зеркалу админа; с 2.7 — no-op. */
+async function openAdminOwnerDriverCabinet(){
+  return;
+}
 function wireShellHandlers(){
-  $('admin-as-driver')&&($('admin-as-driver').onclick=()=>{
-    if(!currentAdmin && !restoreAdminSession()){ show('admin-pin'); return; }
-    if(typeof openDriverLogin==='function') openDriverLogin(true);
-  });
+  $('admin-as-driver')&&($('admin-as-driver').onclick=()=>{ openAdminOwnerDriverCabinet(); });
   if(typeof loginDriver==='function') wireDriverLoginHandlers();
   $('btn-home')&&typeof showDriverHome==='function'&&($('btn-home').onclick=showDriverHome);
   $('btn-eto')&&typeof showEto==='function'&&($('btn-eto').onclick=showEto);
@@ -5761,6 +6581,9 @@ function wireShellHandlers(){
     });
     $('admin-sidebar-backdrop')&&($('admin-sidebar-backdrop').onclick=closeAdminSidebar);
   }
+  $('admin-cabinet-settings-btn')&&($('admin-cabinet-settings-btn').onclick=()=>{
+    if(typeof openCabinetSettings==='function') openCabinetSettings('hub');
+  });
   $('admin-notify-toggle')&&($('admin-notify-toggle').onclick=async()=>{
     if(typeof adminNotifyActive==='function' && adminNotifyActive()){
       if(typeof setAdminNotifyWanted==='function') setAdminNotifyWanted(false);
